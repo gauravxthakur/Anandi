@@ -36,7 +36,7 @@ for i in range(len(dirs)):
     xc = (xc + 0.5) * u - 0.5
     yc = (yc + 0.5) * u - 0.5
     
-    # 2. CALIBRATION: Subtract a tiny offset (0.5 pixels) to move from 
+    # 2. CALIBRATION: Subtract a tiny offset to move from 
     # the outer edge of the prediction to the center of the skull bone.
     offset = 0.05
     a = (a - offset) * u

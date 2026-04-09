@@ -170,3 +170,6 @@ models/*.pt
 # Ignore OS-generated files
 .DS_Store
 Thumbs.db
+
+
+single_test_img.png

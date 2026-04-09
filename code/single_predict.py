@@ -76,8 +76,14 @@ def single_predict(image_path, device='cuda'):
     print(f"Semi-axes: a={a:.2f}, b={b:.2f} pixels")
     print(f"Angle: {theta:.4f} radians")
     
-    # Note: To convert to mm, you need pixel size information (from DICOM metadata)
-    print(f"\nNote: To convert to mm, multiply by pixel size from DICOM metadata")
+    # Return measurement data
+    return {
+        'hc_pixels': hc,
+        'center': (xc, yc),
+        'axes': (a, b),
+        'angle': theta,
+        'image_path': image_path
+    }
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

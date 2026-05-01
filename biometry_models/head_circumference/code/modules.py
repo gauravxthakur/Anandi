@@ -389,9 +389,7 @@ def train_model(model, dataloader, epoches=20, lr=0.001, device='cuda', save_mod
 
 
 def predict(model, input_folder, predict_folder,device="cpu"):
-    """
-    Predict using the trained model and save results.
-    """
+    """Run prediction on images and save results."""
 
     model.to(device)
     print("Using {} device".format(device))
@@ -409,7 +407,7 @@ def predict(model, input_folder, predict_folder,device="cpu"):
         print('Predicting: Image = %d / %d' % (i + 1, len(dirs)))
         img_name = dirs[i]
         predict_name = img_name
-        img_path = input_folder + img_name
+        img_path = os.path.join(input_folder, img_name)
 
         img = cv2.imread(img_path, 0)
 
@@ -435,7 +433,7 @@ def predict(model, input_folder, predict_folder,device="cpu"):
         predict = predict * 255
         predict = predict.astype('uint8')
 
-        predict_path = predict_folder + predict_name
+        predict_path = os.path.join(predict_folder, predict_name)
 
         cv2.imwrite(predict_path, predict)
 
@@ -447,9 +445,7 @@ def predict(model, input_folder, predict_folder,device="cpu"):
 
 # Postprocess
 def mcc_edge(in_img):
-    """
-    Extract max connected component and then extract edge.
-    """
+    """Extract max connected component and edge."""
 
     img = in_img
     if in_img.dtype != 'uint8':
@@ -471,11 +467,10 @@ def mcc_edge(in_img):
 
 
 def ellip_fit(in_img):
-    """
-    To fit the fetal head contour into an ellipse, output 5 ellipse parameters.
-    Note: The unit of parameters obtained is pixel distance, and the coordinate system is as follows:
-    the upper left corner of the image is the origin,vertically downward is the X-axis direction,
-    horizontally right is the Y-axis direction.
+    """Fit ellipse to fetal head contour.
+    
+    Returns 5 ellipse parameters. Units are pixels.
+    Origin is upper left corner, X-axis points down, Y-axis points right.
     """
 
     edge_img = in_img
@@ -536,9 +531,7 @@ def ellip_fit(in_img):
 
 # Visualization
 def draw_ellip(xc,yc,a,b,theta,in_img,color='r'):
-    """
-    Image visualization by drawing predicted ellipse on original ultrasound image.
-    """
+    """Draw predicted ellipse on original ultrasound image."""
 
     if len(in_img.shape) == 3:
         img = in_img
@@ -594,9 +587,7 @@ def draw_ellip(xc,yc,a,b,theta,in_img,color='r'):
 
 # Evaluation
 def dice(img1, img2):
-    """
-    Calculate dice coefficient between two images.
-    """
+    """Calculate dice coefficient between two images."""
     img1 = np.round(img1 / 255).astype('uint8')
     img2 = np.round(img2 / 255).astype('uint8')
     s1 = np.sum(img1)
@@ -606,18 +597,16 @@ def dice(img1, img2):
     return d
 
 def dice_folder(label_folder, predict_folder):
-    """
-    Calculate dice coefficient in between tow folder.
-    """
+    """Calculate dice coefficient between two folders."""
     dirs = os.listdir(predict_folder)
     D = []
     print('Calculating dice coefficient ...')
     for i in range(len(dirs)):
         predict_name = dirs[i]
-        predict_path = predict_folder + predict_name
+        predict_path = os.path.join(predict_folder, predict_name)
 
         label_name = predict_name[:-4] + '_Annotation.png'
-        label_path = label_folder + label_name
+        label_path = os.path.join(label_folder, label_name)
 
         label = cv2.imread(label_path, 0)
         predict = cv2.imread(predict_path,0)
@@ -633,9 +622,7 @@ def dice_folder(label_folder, predict_folder):
     return dice_series
 
 def hausdorff_d(img1, img2):
-    """
-    Calculate hausdorff distance between two images using distance transform.
-    """
+    """Calculate hausdorff distance using distance transform."""
     # Get contours
     contours1, _ = cv2.findContours(img1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     contours2, _ = cv2.findContours(img2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -655,19 +642,17 @@ def hausdorff_d(img1, img2):
     return max(dists) if dists else 0
 
 def hausdorff_folder(label_folder, predict_folder,pixel_size):
-    """
-    Calculate hausdorff distance between images in two folder.
-    """
+    """Calculate hausdorff distance between images in two folders."""
 
     dirs = os.listdir(predict_folder)
     D = []
     print('Calculating hausdorff distance ...')
     for i in range(len(dirs)):
         predict_name = dirs[i]
-        predict_path = predict_folder + predict_name
+        predict_path = os.path.join(predict_folder, predict_name)
 
         label_name = predict_name[:-4] + '_Annotation.png'
-        label_path = label_folder + label_name
+        label_path = os.path.join(label_folder, label_name)
 
         label = cv2.imread(label_path, 0)
         predict = cv2.imread(predict_path, 0)

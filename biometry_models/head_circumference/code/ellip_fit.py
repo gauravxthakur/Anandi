@@ -1,6 +1,7 @@
 """
-This script is used for ellipse fitting from edge images.
-Requirement: postprocess.py has been executed so edge images exist.
+Fit ellipses to edge images.
+
+Run postprocess.py first so edge images exist.
 """
 import pandas as pd
 import os
@@ -8,8 +9,17 @@ import cv2
 from modules import ellip_fit
 import numpy as np
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from project_paths import Paths, ensure_results_dirs
+
+ensure_results_dirs()
+
 # Postprocess results folder
-edge_folder = '../results/predictions_edge/'
+edge_folder = Paths.PREDICTIONS_EDGE_DIR
 
 # To save ellipse parameters
 results = []
@@ -17,7 +27,7 @@ name = ['filename', 'center_x(pixel)', 'center_y(pixel)', 'semi_axes_a(pixel)',
         'semi_axes_b(pixel)', 'HC(pixel)', 'angle(rad)']
 
 # Filename of ellipse parameters file
-save_ellip_para_file = '../results/ellip_params.csv'
+save_ellip_para_file = Paths.ELLIP_PARAMS_CSV
 
 # upsample factor
 u = 16
@@ -27,7 +37,7 @@ dirs = os.listdir(edge_folder)
 for i in range(len(dirs)):
     print('Ellip fitting (Optimized): Image = %d / %d' % (i + 1, len(dirs)))
     img_name = dirs[i]
-    img_path = edge_folder + img_name
+    img_path = os.path.join(edge_folder, img_name)
 
     edge_img = cv2.imread(img_path, 0)
     xc, yc, theta, a, b = ellip_fit(edge_img)

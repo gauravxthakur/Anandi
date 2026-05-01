@@ -1,16 +1,23 @@
 """
-This script is used for model evalutation. Four evaluation metrics including
-mean difference, mean absolule difference, mean dice coeffient and mean hausdorff distance
-will be calculated.
-Requirement: Prediction results and ellipse fitting results exist.
+Calculate evaluation metrics for the model.
+
+Computes mean difference, mean absolute difference, mean dice coefficient, 
+and mean hausdorff distance. Requires prediction results and ellipse fitting results.
 """
 import numpy as np
 from modules import dice_folder, hausdorff_folder
 import pandas as pd
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from project_paths import Paths
+
 # True and predict params of fetal head
-params_label_file = '../data/validation/val_set_pixel_size_and_HC.csv'
-params_predict_file = '../results/ellip_params.csv'
+params_label_file = Paths.VALIDATION_CSV
+params_predict_file = Paths.ELLIP_PARAMS_CSV
 
 # Calculate mean difference and mean abs difference
 params_label = pd.read_csv(params_label_file)
@@ -26,9 +33,7 @@ predict_hc = params_predict['HC(pixel)'].values
 label_ps_series = pd.Series(label_ps,label_fn)
 label_hc_series = pd.Series(label_hc,label_fn)
 
-
 predict_hc_series = pd.Series(predict_hc,predict_fn)
-
 
 eval_results = pd.DataFrame({'pixel size(mm)':label_ps_series, 'HC_truth(mm)':label_hc_series,
                              'HC_predict(pixel)': predict_hc_series})
@@ -43,10 +48,9 @@ ave_df = np.average(eval_results['Difference(mm)'].values)
 print("Mean difference: %f(mm)" % (ave_df))
 print("Mean absolulate difference: %f(mm)" % (ave_adf))
 
-
 # label and prediction folder
-label_folder = '../data/validation/labels/'
-predict_folder = '../results/predictions/'
+label_folder = Paths.VALIDATION_LABELS_DIR
+predict_folder = Paths.PREDICTIONS_DIR
 
 # Calculate mean dice cofficience
 dice = dice_folder(label_folder,predict_folder)
@@ -61,5 +65,5 @@ ave_hd = np.average(hd.values)
 print('Mean hausdorff distance between predict and label is: %f(mm)' % ave_hd)
 
 # save evaluation results
-save_path = '../results/eval_results.csv'
+save_path = Paths.EVAL_RESULTS_CSV
 eval_results.to_csv(save_path)

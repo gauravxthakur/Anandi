@@ -6,11 +6,15 @@ import sys
 import torch
 import cv2
 import numpy as np
+from pathlib import Path
 from modules import CSM, mcc_edge, ellip_fit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from project_paths import Paths
 
 def single_predict(image_path, device='cuda'):
     # Load the trained model
-    net_dict_file = '../models/test_model.pth'
+    net_dict_file = Paths.MODEL_TEST
     net = CSM()
     net.load_state_dict(torch.load(net_dict_file))
     net.to(device)

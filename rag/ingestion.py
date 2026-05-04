@@ -6,7 +6,7 @@ from lancedb.embeddings import get_registry
 db = lancedb.connect("./data")
 
 # Define the model
-model = get_registry().get("sentence-transformers").create(name="BAAI/bge-small-en-v1.5")
+model = get_registry().get("fastembed").create(name="BAAI/bge-small-en-v1.5")
 
 # Define the schema
 class Docs(LanceModel):

@@ -4,12 +4,15 @@ from lancedb.embeddings import get_registry
 from pydantic import Field
 import os
 from pathlib import Path
+from transformers import AutoTokenizer
 
 # Connect to the data folder
-db = lancedb.connect("./data")
+db = lancedb.connect("./rag/data")
 
-# Define the model
-model = get_registry().get("fastembed").create(name="BAAI/bge-small-en-v1.5")
+# Define the embedding model
+model = get_registry().get("sentence-transformers").create(name="BAAI/bge-small-en-v1.5")
+# Initialize BGE tokenizer
+tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
 
 # Define the schema
 class Docs(LanceModel):
@@ -66,6 +69,46 @@ DOCUMENT_METADATA = {
     }
 }
 
+def chunk_text(text, max_tokens=800, overlap_tokens=80):
+    """
+    Split text into overlapping chunks.
+    """
+    # Get token count
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    
+    if len(tokens) <= max_tokens:
+        return [text]
+    
+    chunks = []
+    start = 0
+    
+    while start < len(tokens):
+        end = min(start + max_tokens, len(tokens))
+        
+        # If this is the last chunk, take whatever remains
+        if end >= len(tokens):
+            chunk_tokens = tokens[start:]
+            chunks.append(tokenizer.decode(chunk_tokens))
+            break
+        
+        # Try to break at a sentence boundary within the last 100 tokens
+        chunk_end = end
+        chunk_text_partial = tokenizer.decode(tokens[start:end])
+        
+        # Look backward for sentence endings in the decoded text
+        for i in range(len(chunk_text_partial) - 1, max(len(chunk_text_partial) - 200, 0), -1):
+            if chunk_text_partial[i] in '.!?':
+                # Find corresponding token position
+                sentence_end_tokens = tokenizer.encode(chunk_text_partial[:i+1], add_special_tokens=False)
+                chunk_end = start + len(sentence_end_tokens)
+                break
+        
+        chunk_tokens = tokens[start:chunk_end]
+        chunks.append(tokenizer.decode(chunk_tokens))
+        start = chunk_end - overlap_tokens
+    
+    return chunks
+
 # Create the table (overwrite ensures a clean start during development)
 table = db.create_table("docs", schema=Docs, mode="overwrite")
 
@@ -84,15 +127,19 @@ for filename in os.listdir(markdown_dir):
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Add whole document as one chunk
-        documents.append({
-            "text": content,
-            "source_type": metadata["source_type"],
-            "document_name": metadata["document_name"],
-            "section": "",
-            "chunk_id": f"{metadata['document_name']}:0",
-            "path": str(file_path)
-        })
+        # Chunk the content with overlap
+        chunks = chunk_text(content)
+        
+        # Add each chunk as a separate document
+        for i, chunk in enumerate(chunks):
+            documents.append({
+                "text": chunk,
+                "source_type": metadata["source_type"],
+                "document_name": metadata["document_name"],
+                "section": "",
+                "chunk_id": f"{metadata['document_name']}:{i}",
+                "path": str(file_path)
+            })
 
 if documents:
     table.add(documents)

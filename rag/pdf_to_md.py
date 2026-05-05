@@ -32,37 +32,82 @@ def extract_text_with_pypdf(pdf_path):
         return None
 
 def text_to_markdown(text):
-    """Convert plain text to markdown format"""
+    """Convert plain text to markdown format with legal document structure"""
+    import re
+    
     try:
-        # Basic preprocessing to help markdownify
-        text = text.replace('\n\n', '\n\n\n')  # Add extra spacing for paragraphs
-        
-        # Convert to markdown
-        md_text = markdownify.markdownify(text, heading_style="ATX")
-        
-        # Post-processing for better legal document formatting
-        lines = md_text.split('\n')
+        lines = text.split('\n')
         formatted_lines = []
+        in_list = False
         
         for line in lines:
+            original_line = line
             line = line.strip()
-            if not line:
-                formatted_lines.append('')
-                continue
-                
-            # Detect section headers (e.g., "Section 1", "Section 2(a)", "Act 3")
-            if any(line.startswith(prefix) for prefix in ['Section ', 'Act ', 'Article ', 'Clause ']):
-                if not line.startswith('#'):
-                    line = f"## {line}"
             
-            # Detect numbered lists
-            elif line[0].isdigit() and ('.' in line or ')' in line):
-                if not line.startswith('-') and not line.startswith('*'):
-                    line = f"{line}"
+            if not line:
+                if in_list:
+                    formatted_lines.append('')
+                    in_list = False
+                continue
+            
+            # Fix stretched text artifacts (like CCCCChhhhhaaaaapppppttttteeeeerrrrr)
+            if re.match(r'^([A-Z])\1{3,}', line):
+                line = re.sub(r'([A-Z])\1{3,}', r'\1', line)
+            
+            # Chapter headers (e.g., "Chapter III", "CHAPTER 1")
+            if re.match(r'^[Cc]hapter\s+[IVXLCDM\d]+', line):
+                line = f"# {line}"
+            
+            # Section headers (e.g., "Section 1", "Section 2(a)", "Section 4(2)")
+            elif re.match(r'^Section\s+\d+[\(\)\w]*', line):
+                line = f"## {line}"
+            
+            # Act references (e.g., "Act 3", "Act of 1994")
+            elif re.match(r'^Act\s+[\d\w]+', line):
+                line = f"## {line}"
+            
+            # Rule references (e.g., "Rule 12", "Rule 3(1)")
+            elif re.match(r'^Rule\s+[\d\(\)]+', line):
+                line = f"### {line}"
+            
+            # Article/Clause references
+            elif re.match(r'^(Article|Clause)\s+[\d\(\)]+', line):
+                line = f"### {line}"
+            
+            # ALL CAPS headers (except common words)
+            elif line.isupper() and len(line) > 3 and not line in ['THE', 'AND', 'FOR', 'WITH', 'FROM']:
+                # Clean up stretched caps
+                line = re.sub(r'([A-Z])\1{2,}', r'\1', line)
+                line = f"### {line}"
+            
+            # Numbered lists (e.g., "1. Requirement", "(a) Subsection")
+            elif re.match(r'^\d+\.\s+[\w]', line) or re.match(r'^\([a-z]\)\s+', line):
+                line = f"- {line}"
+                in_list = True
+            
+            # Bullet points with (cid:0) - clean them up
+            elif line.startswith('(cid:0)'):
+                clean_content = line.replace('(cid:0)', '').strip()
+                if clean_content:
+                    line = f"- {clean_content}"
+                    in_list = True
+                else:
+                    continue
+            
+            # Regular content
+            else:
+                if in_list and not line.startswith('-'):
+                    formatted_lines.append('')
+                    in_list = False
             
             formatted_lines.append(line)
         
-        return '\n'.join(formatted_lines)
+        # Clean up multiple empty lines
+        result = '\n'.join(formatted_lines)
+        result = re.sub(r'\n{3,}', '\n\n', result)
+        
+        return result.strip()
+        
     except Exception as e:
         print(f"Error converting to markdown: {e}")
         return text

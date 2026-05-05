@@ -12,7 +12,11 @@ model = get_registry().get("fastembed").create(name="BAAI/bge-small-en-v1.5")
 class Docs(LanceModel):
     text: str = model.SourceField()
     vector: Vector(model.ndims()) = model.VectorField()
+    source_type: str
+    document_name: str
     section: str
+    chunk_id: str
+    path: str
 
 # Create the table (overwrite ensures a clean start during development)
 table = db.create_table("docs", schema=Docs, mode="overwrite")

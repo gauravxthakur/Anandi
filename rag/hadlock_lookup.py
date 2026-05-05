@@ -147,3 +147,31 @@ def ga_for_ac(ac_mm: float) -> Optional[float]:
 def ga_for_fl(fl_mm: float) -> Optional[float]:
     """Convenience function: gestational age from FL."""
     return hadlock.ga_for_fl(fl_mm)
+
+
+def calculate_gestational_age(bpd_mm: float = None, hc_mm: float = None, 
+                              ac_mm: float = None, fl_mm: float = None) -> Dict[str, Optional[float]]:
+    """
+    Calculate gestational age from any combination of fetal measurements.
+    
+    Args:
+        bpd_mm: Biparietal diameter in mm
+        hc_mm: Head circumference in mm  
+        ac_mm: Abdominal circumference in mm
+        fl_mm: Femur length in mm
+    
+    Returns:
+        Dictionary with gestational age estimates for each provided measurement
+    """
+    results = {}
+    
+    if bpd_mm is not None:
+        results['bpd_weeks'] = hadlock.ga_for_bpd(bpd_mm)
+    if hc_mm is not None:
+        results['hc_weeks'] = hadlock.ga_for_hc(hc_mm)
+    if ac_mm is not None:
+        results['ac_weeks'] = hadlock.ga_for_ac(ac_mm)
+    if fl_mm is not None:
+        results['fl_weeks'] = hadlock.ga_for_fl(fl_mm)
+    
+    return results

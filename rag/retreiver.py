@@ -7,7 +7,18 @@ targeted document retrieval from the LanceDB vector store.
 
 import lancedb
 from typing import List, Dict, Optional, Any
-from lancedb.pydantic import LanceModel
+from pydantic import BaseModel, Field
+
+
+class SearchResult(BaseModel):
+    """Structured search result."""
+    text: str = Field(..., description="Search result text")
+    source_type: str = Field(..., description="Source type of the document")
+    document_name: str = Field(..., description="Name of the document")
+    section: str = Field(..., description="Section of the document")
+    chunk_id: str = Field(..., description="Chunk ID of the document")
+    path: str = Field(..., description="Path to the document")
+    score: float = Field(..., description="Score of the search result")
 
 
 class Retriever:
@@ -22,7 +33,7 @@ class Retriever:
                query: str, 
                source_type: Optional[str] = None,
                document_name: Optional[str] = None,
-               limit: int = 5) -> List[Dict[str, Any]]:
+               limit: int = 5) -> List[SearchResult]:
         """
         Search documents with optional metadata filtering.
         
@@ -56,34 +67,38 @@ class Retriever:
         # Convert to list of dictionaries
         search_results = results.to_list()
         
-        # Format results for easy consumption
+        # Format results as Pydantic models
         formatted_results = []
         for result in search_results:
-            formatted_results.append({
-                "text": result.get("text", ""),
-                "source_type": result.get("source_type", ""),
-                "document_name": result.get("document_name", ""),
-                "section": result.get("section", ""),
-                "chunk_id": result.get("chunk_id", ""),
-                "path": result.get("path", ""),
-                "score": result.get("_distance", 0.0)  # Lower is better for vector search
-            })
+            try:
+                formatted_results.append(SearchResult(
+                    text=result.get("text", ""),
+                    source_type=result.get("source_type", ""),
+                    document_name=result.get("document_name", ""),
+                    section=result.get("section", ""),
+                    chunk_id=result.get("chunk_id", ""),
+                    path=result.get("path", ""),
+                    score=result.get("_distance", 0.0)
+                ))
+            except Exception as e:
+                # Skip malformed results
+                continue
         
         return formatted_results
     
-    def search_legal(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_legal(self, query: str, limit: int = 5) -> List[SearchResult]:
         """Search only legal documents."""
         return self.search(query, source_type="legal", limit=limit)
     
-    def search_guidelines(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_guidelines(self, query: str, limit: int = 5) -> List[SearchResult]:
         """Search only guideline documents."""
         return self.search(query, source_type="guideline", limit=limit)
     
-    def search_research(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_research(self, query: str, limit: int = 5) -> List[SearchResult]:
         """Search only research documents."""
         return self.search(query, source_type="research", limit=limit)
     
-    def search_document(self, query: str, document_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_document(self, query: str, document_name: str, limit: int = 5) -> List[SearchResult]:
         """Search within a specific document."""
         return self.search(query, document_name=document_name, limit=limit)
     
@@ -113,21 +128,21 @@ retriever = Retriever()
 def search(query: str, 
           source_type: Optional[str] = None,
           document_name: Optional[str] = None,
-          limit: int = 5) -> List[Dict[str, Any]]:
+          limit: int = 5) -> List[SearchResult]:
     """Convenience function for semantic search with filtering."""
     return retriever.search(query, source_type, document_name, limit)
 
 
-def search_legal(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+def search_legal(query: str, limit: int = 5) -> List[SearchResult]:
     """Convenience function for legal document search."""
     return retriever.search_legal(query, limit)
 
 
-def search_guidelines(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+def search_guidelines(query: str, limit: int = 5) -> List[SearchResult]:
     """Convenience function for guideline search."""
     return retriever.search_guidelines(query, limit)
 
 
-def search_research(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+def search_research(query: str, limit: int = 5) -> List[SearchResult]:
     """Convenience function for research document search."""
     return retriever.search_research(query, limit)

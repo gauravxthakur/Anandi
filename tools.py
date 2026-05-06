@@ -1,4 +1,4 @@
-from langgraph.prebuilt import tool
+from langchain_core.tools import tool
 from rag.hadlock_lookup import calculate_gestational_age, hadlock
 from typing import Optional, Dict, Any
 

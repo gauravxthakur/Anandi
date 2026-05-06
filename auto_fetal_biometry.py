@@ -13,6 +13,8 @@ from IPython.display import Image, display
 from langgraph.types import interrupt # For HITL
 from langgraph.types import Command
 from langchain_core.messages import ToolMessage
+from tools import fetal_biometry_calculator
+from rag.retreiver import search, search_legal, search_guidelines
 
 load_dotenv()
 
@@ -27,7 +29,7 @@ class AgentState(TypedDict):
 
 
 #-------------------------------------TOOLS---------------------------------------------
-local_tools = []
+local_tools = [fetal_biometry_calculator, search, search_legal, search_guidelines]
 
 
 # Initialise the LLM
@@ -75,6 +77,35 @@ async def build_graph():
 async def run_app():
    
     graph = await build_graph()
+    
+    print("Fetal Biometry Assistant (Type 'quit' to exit)")
+    print("=" * 50)
+    
+    while True:
+        try:
+            user_input = input("\nYou: ").strip()
+            
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                print("Goodbye!")
+                break
+                
+            if not user_input:
+                continue
+            
+            # Run the graph with user input
+            response = await graph.ainvoke({
+                "messages": [HumanMessage(content=user_input)]
+            })
+            
+            # Get the assistant's response
+            assistant_message = response["messages"][-1]
+            print(f"\nAssistant: {assistant_message.content}")
+            
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"\nError: {e}")
 
 
 if __name__ == "__main__":

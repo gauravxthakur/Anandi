@@ -60,13 +60,21 @@ def single_predict(image_path, device='cuda'):
     
     # Predict (same as predict.py)
     forward_start = time.time()
+    if device == 'cuda':
+        torch.cuda.synchronize()
     _, _, predict = net(input_img)
+    if device == 'cuda':
+        torch.cuda.synchronize()
+    forward_end = time.time()
+    
+    # GPU->CPU transfer and conversion
+    to_cpu_start = time.time()
     predict = predict[0, 0, :, :]
     predict = predict.cpu().detach().numpy()
     predict = np.round(predict)
     predict = predict * 255
     predict = predict.astype('uint8')
-    forward_end = time.time()
+    to_cpu_end = time.time()
     
     # Postprocess - extract edge (same as postprocess.py)
     postprocess_start = time.time()
@@ -100,6 +108,7 @@ def single_predict(image_path, device='cuda'):
     print(f"Model load time: {(load_end - load_start)*1000:.2f} ms")
     print(f"Preprocess time: {(preprocess_end - preprocess_start)*1000:.2f} ms")
     print(f"Forward pass time: {(forward_end - forward_start)*1000:.2f} ms")
+    print(f"GPU->CPU transfer time: {(to_cpu_end - to_cpu_start)*1000:.2f} ms")
     print(f"Postprocess + ellipse time: {(postprocess_end - postprocess_start)*1000:.2f} ms")
     print(f"Total time: {(total_end - total_start)*1000:.2f} ms")
     

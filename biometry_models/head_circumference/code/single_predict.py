@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 
 def single_predict(image_path, device='cuda'):
+    wall_start = time.time()
     # CUDA sanity check
     print(f"CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
@@ -78,7 +79,8 @@ def single_predict(image_path, device='cuda'):
     forward_start = time.time()
     if device == 'cuda':
         torch.cuda.synchronize()
-    _, _, predict = net(input_img)
+    with torch.inference_mode():
+        _, _, predict = net(input_img)
     if device == 'cuda':
         torch.cuda.synchronize()
     forward_end = time.time()
@@ -135,6 +137,9 @@ def single_predict(image_path, device='cuda'):
     print(f"Center: ({xc:.2f}, {yc:.2f}) pixels")
     print(f"Semi-axes: a={a:.2f}, b={b:.2f} pixels")
     print(f"Angle: {theta:.4f} radians")
+
+    wall_end = time.time()
+    print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
     
     # Return measurement data
     return {
@@ -146,9 +151,12 @@ def single_predict(image_path, device='cuda'):
     }
 
 if __name__ == "__main__":
+    script_start = time.time()
     if len(sys.argv) != 2:
         print("Usage: python single_predict.py path/to/image.png")
         sys.exit(1)
     
     image_path = sys.argv[1]
     single_predict(image_path)
+    script_end = time.time()
+    print(f"Wall time (full script): {(script_end - script_start)*1000:.2f} ms")

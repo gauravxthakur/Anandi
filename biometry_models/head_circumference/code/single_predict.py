@@ -2,18 +2,20 @@
 Single image prediction for fetal head biometry.
 
 """
+import argparse
 import sys
 import time
 import torch
 import cv2
 import numpy as np
+
 from pathlib import Path
 from modules import CSM, mcc_edge, ellip_fit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 
-def single_predict(image_path, device='cuda'):
+def single_predict(image_path, device='cuda', seg_only=False, no_ellipse=False):
     wall_start = time.time()
     # CUDA sanity check
     print(f"CUDA available: {torch.cuda.is_available()}")
@@ -78,11 +80,14 @@ def single_predict(image_path, device='cuda'):
     # Predict (same as predict.py)
     # Warmup a couple of forward passes so cuDNN kernel selection / autotune
     # doesn't get counted as "forward pass" time.
+    warmup_start = time.time()
     for _ in range(2):
         with torch.inference_mode():
             net(input_img)
         if device == 'cuda':
             torch.cuda.synchronize()
+    warmup_end = time.time()
+    warmup_ms = (warmup_end - warmup_start) * 1000
 
     if device == 'cuda':
         torch.cuda.synchronize()
@@ -101,10 +106,47 @@ def single_predict(image_path, device='cuda'):
     predict = predict * 255
     predict = predict.astype('uint8')
     to_cpu_end = time.time()
+
+    if seg_only:
+        total_end = time.time()
+        print(f"\n=== Timing Breakdown ===")
+        print(f"Model load time: {(load_end - load_start)*1000:.2f} ms")
+        print(f"Preprocess time: {(preprocess_end - preprocess_start)*1000:.2f} ms")
+        print(f"Warmup time: {warmup_ms:.2f} ms")
+        print(f"Forward pass time: {(forward_end - forward_start)*1000:.2f} ms")
+        print(f"GPU->CPU transfer time: {(to_cpu_end - to_cpu_start)*1000:.2f} ms")
+        print(f"Postprocess + ellipse time: 0.00 ms")
+        print(f"Total time: {(total_end - total_start)*1000:.2f} ms")
+
+        wall_end = time.time()
+        print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
+        return {
+            'predict_mask_uint8': predict,
+            'image_path': image_path
+        }
     
     # Postprocess - extract edge (same as postprocess.py)
     postprocess_start = time.time()
     edge_img = mcc_edge(predict)
+
+    if no_ellipse:
+        postprocess_end = time.time()
+        total_end = time.time()
+        print(f"\n=== Timing Breakdown ===")
+        print(f"Model load time: {(load_end - load_start)*1000:.2f} ms")
+        print(f"Preprocess time: {(preprocess_end - preprocess_start)*1000:.2f} ms")
+        print(f"Warmup time: {warmup_ms:.2f} ms")
+        print(f"Forward pass time: {(forward_end - forward_start)*1000:.2f} ms")
+        print(f"GPU->CPU transfer time: {(to_cpu_end - to_cpu_start)*1000:.2f} ms")
+        print(f"Postprocess + ellipse time: {(postprocess_end - postprocess_start)*1000:.2f} ms")
+        print(f"Total time: {(total_end - total_start)*1000:.2f} ms")
+
+        wall_end = time.time()
+        print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
+        return {
+            'edge_img_uint8': edge_img,
+            'image_path': image_path
+        }
     
     # Ellipse fitting (same as ellip_fit.py)
     xc, yc, theta, a, b = ellip_fit(edge_img)
@@ -133,6 +175,7 @@ def single_predict(image_path, device='cuda'):
     print(f"\n=== Timing Breakdown ===")
     print(f"Model load time: {(load_end - load_start)*1000:.2f} ms")
     print(f"Preprocess time: {(preprocess_end - preprocess_start)*1000:.2f} ms")
+    print(f"Warmup time: {warmup_ms:.2f} ms")
     print(f"Forward pass time: {(forward_end - forward_start)*1000:.2f} ms")
     print(f"GPU->CPU transfer time: {(to_cpu_end - to_cpu_start)*1000:.2f} ms")
     print(f"Postprocess + ellipse time: {(postprocess_end - postprocess_start)*1000:.2f} ms")
@@ -160,14 +203,21 @@ def single_predict(image_path, device='cuda'):
 
 if __name__ == "__main__":
     script_start = time.time()
-    if len(sys.argv) != 2:
-        print("Usage: python single_predict.py path/to/image.png")
-        sys.exit(1)
-    
-    image_path = sys.argv[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('image_path')
+    parser.add_argument('--seg-only', action='store_true')
+    parser.add_argument('--no-ellipse', action='store_true')
+    args = parser.parse_args()
+
+    image_path = args.image_path
     
     # Run single prediction first
-    single_predict(image_path)
+    single_predict(image_path, seg_only=args.seg_only, no_ellipse=args.no_ellipse)
+
+    if args.seg_only or args.no_ellipse:
+        script_end = time.time()
+        print(f"Wall time (full script): {(script_end - script_start)*1000:.2f} ms")
+        sys.exit(0)
     
     print("\n=== In-process microbenchmark ===")
     # Load model once for benchmarking

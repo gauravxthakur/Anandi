@@ -22,6 +22,14 @@ def single_predict(image_path, device='cuda'):
         print(f"WARNING: CUDA not available, falling back to CPU")
         device = 'cpu'
     
+    # Runtime diagnostics
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA version: {torch.version.cuda}")
+    print(f"cuDNN available: {torch.backends.cudnn.is_available()}")
+    print(f"cuDNN enabled: {torch.backends.cudnn.enabled}")
+    if torch.backends.cudnn.is_available():
+        print(f"cuDNN version: {torch.backends.cudnn.version()}")
+    
     # Start total timer
     total_start = time.time()
     
@@ -32,6 +40,10 @@ def single_predict(image_path, device='cuda'):
     net.load_state_dict(torch.load(net_dict_file))
     net.to(device)
     net.eval()
+    
+    # Confirm model device
+    print(f"Model device: {next(net.parameters()).device}")
+    
     load_end = time.time()
     
     # Load and preprocess image
@@ -56,6 +68,10 @@ def single_predict(image_path, device='cuda'):
     input_img = input_img.unsqueeze(0)
     input_img = input_img.unsqueeze(0)
     input_img = input_img.to(device)
+    
+    # Confirm input tensor device
+    print(f"Input tensor device: {input_img.device}")
+    
     preprocess_end = time.time()
     
     # Predict (same as predict.py)

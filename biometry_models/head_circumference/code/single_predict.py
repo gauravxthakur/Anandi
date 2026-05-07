@@ -76,9 +76,17 @@ def single_predict(image_path, device='cuda'):
     preprocess_end = time.time()
     
     # Predict (same as predict.py)
-    forward_start = time.time()
+    # Warmup a couple of forward passes so cuDNN kernel selection / autotune
+    # doesn't get counted as "forward pass" time.
+    for _ in range(2):
+        with torch.inference_mode():
+            net(input_img)
+        if device == 'cuda':
+            torch.cuda.synchronize()
+
     if device == 'cuda':
         torch.cuda.synchronize()
+    forward_start = time.time()
     with torch.inference_mode():
         _, _, predict = net(input_img)
     if device == 'cuda':
@@ -157,6 +165,51 @@ if __name__ == "__main__":
         sys.exit(1)
     
     image_path = sys.argv[1]
+    
+    # Run single prediction first
     single_predict(image_path)
+    
+    print("\n=== In-process microbenchmark ===")
+    # Load model once for benchmarking
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    net_dict_file = Paths.MODEL_TEST
+    net = CSM()
+    net.load_state_dict(torch.load(net_dict_file))
+    net.to(device)
+    net.eval()
+    
+    # Prepare input tensor once
+    img = cv2.imread(image_path, 0)
+    k1 = 4
+    w = int(768 / k1)
+    h = int(512 / k1)
+    input_img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    input_img = input_img.astype('float32') / 255.0
+    input_img = torch.from_numpy(input_img).unsqueeze(0).unsqueeze(0).to(device)
+    
+    # Warmup runs
+    print("Warmup runs (5 iterations):")
+    for i in range(5):
+        with torch.inference_mode():
+            _, _, predict = net(input_img)
+        if device == 'cuda':
+            torch.cuda.synchronize()
+    
+    # Benchmark runs
+    print("Benchmark runs (20 iterations):")
+    times = []
+    for i in range(20):
+        start = time.time()
+        if device == 'cuda':
+            torch.cuda.synchronize()
+        with torch.inference_mode():
+            _, _, predict = net(input_img)
+        if device == 'cuda':
+            torch.cuda.synchronize()
+        end = time.time()
+        times.append((end - start) * 1000)
+    
+    print(f"Forward pass times (ms): min={min(times):.2f}, max={max(times):.2f}, mean={sum(times)/len(times):.2f}")
+    
     script_end = time.time()
     print(f"Wall time (full script): {(script_end - script_start)*1000:.2f} ms")

@@ -3,6 +3,7 @@ Single image prediction for fetal head biometry.
 
 """
 import sys
+import time
 import torch
 import cv2
 import numpy as np
@@ -13,14 +14,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 
 def single_predict(image_path, device='cuda'):
+    # CUDA sanity check
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"Using device: {torch.cuda.get_device_name(0)}")
+    else:
+        print(f"WARNING: CUDA not available, falling back to CPU")
+        device = 'cpu'
+    
+    # Start total timer
+    total_start = time.time()
+    
     # Load the trained model
+    load_start = time.time()
     net_dict_file = Paths.MODEL_TEST
     net = CSM()
     net.load_state_dict(torch.load(net_dict_file))
     net.to(device)
     net.eval()
+    load_end = time.time()
     
     # Load and preprocess image
+    preprocess_start = time.time()
     img = cv2.imread(image_path, 0)
     if img is None:
         print(f"Error: Cannot load image from {image_path}")
@@ -41,16 +56,20 @@ def single_predict(image_path, device='cuda'):
     input_img = input_img.unsqueeze(0)
     input_img = input_img.unsqueeze(0)
     input_img = input_img.to(device)
+    preprocess_end = time.time()
     
     # Predict (same as predict.py)
+    forward_start = time.time()
     _, _, predict = net(input_img)
     predict = predict[0, 0, :, :]
     predict = predict.cpu().detach().numpy()
     predict = np.round(predict)
     predict = predict * 255
     predict = predict.astype('uint8')
+    forward_end = time.time()
     
     # Postprocess - extract edge (same as postprocess.py)
+    postprocess_start = time.time()
     edge_img = mcc_edge(predict)
     
     # Ellipse fitting (same as ellip_fit.py)
@@ -71,6 +90,18 @@ def single_predict(image_path, device='cuda'):
     # 3. RAMANUJAN'S FORMULA for head circumference
     h = ((a - b) ** 2) / ((a + b) ** 2)
     hc = np.pi * (a + b) * (1 + (3 * h) / (10 + np.sqrt(4 - 3 * h)))
+    postprocess_end = time.time()
+    
+    # End total timer
+    total_end = time.time()
+    
+    # Print timing breakdown
+    print(f"\n=== Timing Breakdown ===")
+    print(f"Model load time: {(load_end - load_start)*1000:.2f} ms")
+    print(f"Preprocess time: {(preprocess_end - preprocess_start)*1000:.2f} ms")
+    print(f"Forward pass time: {(forward_end - forward_start)*1000:.2f} ms")
+    print(f"Postprocess + ellipse time: {(postprocess_end - postprocess_start)*1000:.2f} ms")
+    print(f"Total time: {(total_end - total_start)*1000:.2f} ms")
     
     # Display results
     print(f"\n=== Fetal Head Circumference Measurement ===")

@@ -1,21 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { FormSectionCard } from "@/components/form-section-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   RadioGroup,
   RadioGroupItem,
 } from "@/components/ui/radio-group";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import {
   ToggleGroup,
@@ -23,47 +21,11 @@ import {
 } from "@/components/ui/toggle-group";
 import { Textarea } from "@/components/ui/textarea";
 
-const patientIntakeSchema = z
-  .object({
-    fullName: z.string().min(1, "Full name is required"),
-    age: z.coerce.number().int().min(10).max(60),
-    husbandOrFatherName: z.string().min(1, "This field is required"),
-    contactNumber: z.string().min(7, "Contact number is too short"),
-    postalAddress: z.string().min(1, "Address is required"),
-
-    livingChildrenTotal: z.coerce.number().int().min(0),
-    livingSonsCount: z.coerce.number().int().min(0),
-    livingSonsAges: z.string().optional().default(""),
-    livingDaughtersCount: z.coerce.number().int().min(0),
-    livingDaughtersAges: z.string().optional().default(""),
-    lmpOrWeeks: z.string().min(1, "LMP / Weeks is required"),
-
-    referralSource: z.enum(["self", "external"]),
-    referringDoctorNameAddress: z.string().optional().default(""),
-
-    indicationForUltrasound: z.array(z.string()).default([]),
-    resultOfProcedure: z.string().optional().default(""),
-    indicationForMtp: z.boolean().default(false),
-
-    dateOfProcedure: z.string().min(1),
-    patientConsentNoSexDisclosure: z.boolean().default(false),
-    doctorConfirmationNoSexDisclosure: z.boolean().default(false),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.referralSource === "external" &&
-      !data.referringDoctorNameAddress?.trim()
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["referringDoctorNameAddress"],
-        message: "Referring doctor name/address is required for external referral",
-      });
-    }
-  });
-
-type PatientIntakeValues = z.input<typeof patientIntakeSchema>;
-type PatientIntakeParsedValues = z.output<typeof patientIntakeSchema>;
+import {
+  patientIntakeSchema,
+  type PatientIntakeFormValues,
+  type PatientIntakeParsedValues,
+} from "@/lib/patient-intake-schema";
 
 function getTodayIsoDate() {
   const d = new Date();
@@ -78,26 +40,8 @@ function FieldError({ message }: { message?: string }) {
   return <p className="text-sm text-destructive">{message}</p>;
 }
 
-function FormSectionCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card className="shadow-sm">
-      <CardHeader className="space-y-2">
-        <CardTitle className="text-lg">{title}</CardTitle>
-        <Separator />
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
 export default function Home() {
-  const form = useForm<PatientIntakeValues>({
+  const form = useForm<PatientIntakeFormValues>({
     resolver: zodResolver(patientIntakeSchema),
     defaultValues: {
       fullName: "",
@@ -130,7 +74,7 @@ export default function Home() {
   const referralSource = form.watch("referralSource");
   const selectedIndications = form.watch("indicationForUltrasound");
 
-  const onSubmit = (values: PatientIntakeValues) => {
+  const onSubmit = (values: PatientIntakeFormValues) => {
     const parsed: PatientIntakeParsedValues = patientIntakeSchema.parse(values);
     // For now: just log + toast. You can later POST this to your API.
     // eslint-disable-next-line no-console

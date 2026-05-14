@@ -97,7 +97,10 @@ export function PatientIntakeForm() {
           onSubmit={form.handleSubmit(onSubmit)}
           className="space-y-6"
         >
-          <FormSectionCard title="Card 1: Patient Identity">
+          <FormSectionCard
+            title="Card 1: Patient Identity"
+            description="Legal name, age, next of kin, contact, and mailing address for this visit."
+          >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="fullName">Full Name</Label>
@@ -144,7 +147,10 @@ export function PatientIntakeForm() {
             </div>
           </FormSectionCard>
 
-          <FormSectionCard title="Card 2: Obstetric History">
+          <FormSectionCard
+            title="Card 2: Obstetric History"
+            description="Living children, LMP or current gestation, and ages where applicable."
+          >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="livingChildrenTotal">
@@ -212,7 +218,10 @@ export function PatientIntakeForm() {
             </div>
           </FormSectionCard>
 
-          <FormSectionCard title="Card 3: Referral Details">
+          <FormSectionCard
+            title="Card 3: Referral Details"
+            description="Whether the patient came directly or via another clinician; capture referrer details when external."
+          >
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>Referral Source</Label>
@@ -258,7 +267,10 @@ export function PatientIntakeForm() {
             </div>
           </FormSectionCard>
 
-          <FormSectionCard title='Card 4: The "Anandi" AI Insights (Diagnostic Info)'>
+          <FormSectionCard
+            title='Card 4: The "Anandi" AI Insights (Diagnostic Info)'
+            description="Ultrasound indications, procedure narrative (may be AI-assisted later), and MTP indication."
+          >
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label>Indication for Ultrasound</Label>
@@ -320,7 +332,10 @@ export function PatientIntakeForm() {
             </div>
           </FormSectionCard>
 
-          <FormSectionCard title='Card 5: Digital Sign-off (The "Declarations")'>
+          <FormSectionCard
+            title='Card 5: Digital Sign-off (The "Declarations")'
+            description="Procedure date and mandatory confirmations regarding fetal sex disclosure."
+          >
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="dateOfProcedure">Date of Procedure</Label>

@@ -11,7 +11,7 @@ import numpy as np
 from single_predict import (
     FOREGROUND_THRESHOLD,
     _clinical_response_fields,
-    _quality_flag_from_confidence,
+    _compute_quality_flag_and_reasons,
     compute_sigmoid_confidence_metrics,
 )
 
@@ -38,12 +38,10 @@ def main() -> None:
     assert c1["quality_flag"] in ("HIGH", "MEDIUM", "LOW")
     assert c1["confidence"] == r1["confidence"]
 
-    # High mask confidence but bad ellipse -> UI should still show LOW
-    q_bad = _quality_flag_from_confidence(0.99, ellipse_valid=False)
+    q_bad, _ = _compute_quality_flag_and_reasons(0.99, ellipse_valid=False)
     assert q_bad == "LOW"
 
-    # Ellipse path not evaluated -> flag follows mask only
-    q_seg = _quality_flag_from_confidence(0.99, ellipse_valid=None)
+    q_seg, _ = _compute_quality_flag_and_reasons(0.99, ellipse_valid=None)
     assert q_seg == "HIGH"
 
     print("confidence_quick_test: all checks passed")

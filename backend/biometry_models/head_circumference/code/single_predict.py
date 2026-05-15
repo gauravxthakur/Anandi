@@ -32,6 +32,9 @@ Prediction response contract (single source of truth for API / UI keys):
     growth_verdict (str | None)
         Short non-diagnostic explanation of the growth classification.
 
+Latency: :func:`get_inference_model` caches CSM per device. The first request on a
+device pays weight load + a short inference warmup; repeat scans in the same process
+are much faster (typical for live demo / API workers).
 """
 from __future__ import annotations
 
@@ -55,6 +58,63 @@ from gemini_verdict import generate_growth_verdict
 
 # Foreground mask for mean activation (sigmoid output is in [0, 1]).
 FOREGROUND_THRESHOLD = 0.5
+
+# CSM weights are loaded once per process per device (see :func:`get_inference_model`).
+# The first request on a device also runs a short CUDA/cuDNN warmup; later calls reuse both.
+_MODEL_BY_DEVICE: Dict[str, torch.nn.Module] = {}
+_WARMED_DEVICES: set[str] = set()
+_INFERENCE_WARMUP_PASSES = 2
+
+
+def _resolve_device(device: str) -> str:
+    if device == "cuda" and not torch.cuda.is_available():
+        return "cpu"
+    return device
+
+
+def get_inference_model(device: str = "cuda") -> tuple[torch.nn.Module, str, float]:
+    """
+    Return the shared CSM instance for ``device``.
+
+    Loads ``Paths.MODEL_TEST`` once per process per device. Subsequent calls return
+    the cached module with ~0 ms load time.
+    """
+    device = _resolve_device(device)
+    load_start = time.time()
+    if device not in _MODEL_BY_DEVICE:
+        net = CSM()
+        state = torch.load(Paths.MODEL_TEST, map_location=device, weights_only=True)
+        net.load_state_dict(state)
+        net.to(device)
+        net.eval()
+        _MODEL_BY_DEVICE[device] = net
+    load_ms = (time.time() - load_start) * 1000
+    return _MODEL_BY_DEVICE[device], device, load_ms
+
+
+def preload_inference_model(device: str = "cuda") -> None:
+    """Eager-load weights at app startup so the first scan avoids disk I/O."""
+    get_inference_model(device)
+
+
+def _warmup_inference(
+    net: torch.nn.Module,
+    device: str,
+    input_img: torch.Tensor,
+    *,
+    passes: int = _INFERENCE_WARMUP_PASSES,
+) -> float:
+    """Run cuDNN autotune warmups once per device; return elapsed ms."""
+    if device in _WARMED_DEVICES:
+        return 0.0
+    start = time.time()
+    with torch.inference_mode():
+        for _ in range(passes):
+            net(input_img)
+            if device == "cuda":
+                torch.cuda.synchronize()
+    _WARMED_DEVICES.add(device)
+    return (time.time() - start) * 1000
 
 
 def compute_sigmoid_confidence_metrics(
@@ -315,18 +375,15 @@ def single_predict(
     # Start total timer
     total_start = time.time()
     
-    # Load the trained model
     load_start = time.time()
-    net_dict_file = Paths.MODEL_TEST
-    net = CSM()
-    net.load_state_dict(torch.load(net_dict_file))
-    net.to(device)
-    net.eval()
-    
-    # Confirm model device
-    print(f"Model device: {next(net.parameters()).device}")
-    
+    net, device, _ = get_inference_model(device)
     load_end = time.time()
+    print(f"Model device: {next(net.parameters()).device}")
+    if load_end - load_start > 0.01:
+        print(
+            "Note: first request in this process loads weights and warms up CUDA; "
+            "later scans reuse the cached model."
+        )
     
     # Load and preprocess image
     preprocess_start = time.time()
@@ -356,17 +413,7 @@ def single_predict(
     
     preprocess_end = time.time()
     
-    # Predict (same as predict.py)
-    # Warmup a couple of forward passes so cuDNN kernel selection / autotune
-    # doesn't get counted as "forward pass" time.
-    warmup_start = time.time()
-    for _ in range(2):
-        with torch.inference_mode():
-            net(input_img)
-        if device == 'cuda':
-            torch.cuda.synchronize()
-    warmup_end = time.time()
-    warmup_ms = (warmup_end - warmup_start) * 1000
+    warmup_ms = _warmup_inference(net, device, input_img)
 
     if device == 'cuda':
         torch.cuda.synchronize()
@@ -545,13 +592,8 @@ if __name__ == "__main__":
         sys.exit(0)
     
     print("\n=== In-process microbenchmark ===")
-    # Load model once for benchmarking
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    net_dict_file = Paths.MODEL_TEST
-    net = CSM()
-    net.load_state_dict(torch.load(net_dict_file))
-    net.to(device)
-    net.eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    net, device, _ = get_inference_model(device)
     
     # Prepare input tensor once
     img = cv2.imread(image_path, 0)

@@ -25,7 +25,7 @@ GROWTH_SMALL_FOR_GA = "SMALL_FOR_GA"
 GROWTH_LARGE_FOR_GA = "LARGE_FOR_GA"
 GROWTH_INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
-# Static verdict templates (hackathon cheat) — used if Gemini unavailable or disagrees
+# Static verdict templates when the LLM is unavailable or fails validation.
 VERDICT_TEMPLATES = {
     GROWTH_NORMAL: (
         "Head circumference is consistent with expected size for reported gestational age. "
@@ -148,7 +148,7 @@ def _validate_verdict_matches_code(
     return True
 
 
-def generate_gemini_verdict(
+def generate_growth_verdict(
     growth_code: str,
     *,
     clinical_ga_weeks: Optional[float] = None,
@@ -160,11 +160,9 @@ def generate_gemini_verdict(
     """
     Generate a short LLM-based explanation of the growth classification.
 
-    Steps:
-    1. Build structured prompt from growth_code and numeric context.
-    2. Call ChatGoogleGenerativeAI (if API key available and use_template_only=False).
-    3. Validate response against growth_code keywords.
-    4. Fall back to static template on API error, timeout, or guardrail failure.
+    Builds a structured prompt, calls the configured LLM when available, validates
+    the response against ``growth_code``, and falls back to a static template on
+    API errors or guardrail failure.
 
     Args:
         growth_code: One of NORMAL, SMALL_FOR_GA, LARGE_FOR_GA, INSUFFICIENT_DATA.
@@ -183,9 +181,8 @@ def generate_gemini_verdict(
         logger.warning(f"No template for growth_code {growth_code}")
         return None
 
-    # Hackathon cheat: if use_template_only, return template immediately
     if use_template_only:
-        logger.info(f"Using template-only mode for {growth_code}")
+        logger.debug("Template-only verdict for %s", growth_code)
         return template
 
     # Try Gemini if API key is available

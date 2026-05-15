@@ -12,12 +12,17 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
+def _default_hadlock_json_path() -> Path:
+    """Path to Hadlock JSON next to this module (``backend/rag/data/``)."""
+    return Path(__file__).resolve().parent / "data" / "hadlock.json"
+
+
 class HadlockLookup:
     """Hadlock reference data lookup with interpolation."""
     
-    def __init__(self, json_path: str = "rag/data/hadlock.json"):
+    def __init__(self, json_path: str | None = None):
         """Load Hadlock reference data from JSON file."""
-        self.json_path = Path(json_path)
+        self.json_path = Path(json_path) if json_path else _default_hadlock_json_path()
         self.data = self._load_data()
         
     def _load_data(self) -> Dict:

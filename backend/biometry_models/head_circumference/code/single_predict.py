@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 from pixel_to_mm import convert_hc_to_mm, validate_pixel_spacing
 from growth_assessment import assess_growth_from_hc
+from gemini_verdict import generate_gemini_verdict
 
 # Foreground mask for mean activation (sigmoid output is in [0, 1]).
 FOREGROUND_THRESHOLD = 0.5
@@ -154,6 +155,17 @@ def _clinical_response_fields(
     growth = assess_growth_from_hc(hc_mm, clinical_ga_weeks=clinical_ga_weeks)
     reasons.extend(growth.get("growth_reasons") or [])
 
+    # Step 4: Generate Gemini verdict using growth_code and numeric context
+    growth_code = growth.get("growth_code")
+    growth_detail = growth.get("growth_detail") or {}
+    gemma_verdict = generate_gemini_verdict(
+        growth_code,
+        clinical_ga_weeks=growth_detail.get("clinical_ga_weeks"),
+        hc_ga_weeks=growth_detail.get("ga_weeks_from_hc"),
+        hc_ga_minus_clinical_weeks=growth_detail.get("hc_ga_minus_clinical_weeks"),
+        normal_band_weeks=growth_detail.get("normal_band_weeks", 2.0),
+    )
+
     return {
         "calibration": calibration,
         "hc_mm": hc_mm,
@@ -169,7 +181,7 @@ def _clinical_response_fields(
         "growth_code": growth["growth_code"],
         "growth_detail": growth["growth_detail"],
         "growth_reasons": growth.get("growth_reasons") or [],
-        "gemma_verdict": None,
+        "gemma_verdict": gemma_verdict,
     }
 
 

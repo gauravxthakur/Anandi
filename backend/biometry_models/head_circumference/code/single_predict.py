@@ -1,10 +1,38 @@
 """
 Single image prediction for fetal head biometry.
 
+Prediction response contract (single source of truth for API / UI keys):
+
+    hc_pixels (float, optional)
+        Head circumference in upsampled pixel units when ellipse path runs.
+    hc_mm (float | None)
+        HC in millimeters only when ``pixel_spacing_mm`` is supplied and valid;
+        otherwise None.
+    calibration (str)
+        ``"none"`` — no mm conversion; ``"spacing"`` — ``hc_mm`` from spacing.
+    confidence (float | None)
+        Mean sigmoid on foreground mask; filled in Step 2 (currently None).
+    confidence_detail (dict)
+        mask_area_ratio, foreground_threshold, ellipse_valid — Step 2+.
+    quality_flag (str)
+        One of ``HIGH`` | ``MEDIUM`` | ``LOW`` (Step 5 will implement logic).
+    quality_reasons (list[str])
+        Machine-readable explanations for judges / support.
+    ga_weeks_from_hc (float | None)
+        Hadlock GA from HC mm when available; Step 3 (currently None).
+    growth_code (str)
+        ``NORMAL`` | ``SMALL_FOR_GA`` | ``LARGE_FOR_GA`` | ``INSUFFICIENT_DATA``.
+    gemma_verdict (str | None)
+        Short LLM copy; non-diagnostic — Step 4 (currently None).
+
 """
+from __future__ import annotations
+
 import argparse
 import sys
 import time
+from typing import Any, Dict, Optional
+
 import torch
 import cv2
 import numpy as np
@@ -14,8 +42,66 @@ from modules import CSM, mcc_edge, ellip_fit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
+from pixel_to_mm import convert_hc_to_mm, validate_pixel_spacing
 
-def single_predict(image_path, device='cuda', seg_only=False, no_ellipse=False):
+
+def _clinical_response_fields(
+    *,
+    hc_pixels: Optional[float] = None,
+    pixel_spacing_mm: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Dashboard / API fields shared by all ``single_predict`` return variants.
+
+    Step 1: stable keys and null placeholders; later steps fill values.
+    """
+    calibration = "none"
+    hc_mm: Optional[float] = None
+    quality_reasons = ["confidence_not_computed"]
+
+    if hc_pixels is not None and pixel_spacing_mm is not None:
+        if validate_pixel_spacing(pixel_spacing_mm):
+            hc_mm = float(convert_hc_to_mm(hc_pixels, pixel_spacing_mm))
+            calibration = "spacing"
+        else:
+            quality_reasons = quality_reasons + ["invalid_pixel_spacing"]
+
+    return {
+        "calibration": calibration,
+        "hc_mm": hc_mm,
+        "confidence": None,
+        "confidence_detail": {
+            "mask_area_ratio": None,
+            "foreground_threshold": None,
+            "ellipse_valid": None,
+        },
+        "quality_flag": "LOW",
+        "quality_reasons": quality_reasons,
+        "ga_weeks_from_hc": None,
+        "growth_code": "INSUFFICIENT_DATA",
+        "gemma_verdict": None,
+    }
+
+
+def single_predict(
+    image_path,
+    device="cuda",
+    seg_only=False,
+    no_ellipse=False,
+    pixel_spacing_mm: Optional[float] = None,
+):
+    """
+    Run HC segmentation and optional ellipse fit.
+
+    Args:
+        image_path: Path to grayscale ultrasound frame.
+        device: ``cuda`` or ``cpu``.
+        seg_only: If True, return uint8 mask only (plus clinical envelope).
+        no_ellipse: If True, return edge image only (plus clinical envelope).
+        pixel_spacing_mm: When set and valid, ``hc_mm`` is filled on the full
+            ellipse return path; otherwise ``hc_mm`` is null and
+            ``calibration`` is ``none``.
+    """
     wall_start = time.time()
     # CUDA sanity check
     print(f"CUDA available: {torch.cuda.is_available()}")
@@ -121,8 +207,9 @@ def single_predict(image_path, device='cuda', seg_only=False, no_ellipse=False):
         wall_end = time.time()
         print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
         return {
-            'predict_mask_uint8': predict,
-            'image_path': image_path
+            "predict_mask_uint8": predict,
+            "image_path": image_path,
+            **_clinical_response_fields(),
         }
     
     # Postprocess - extract edge (same as postprocess.py)
@@ -144,8 +231,9 @@ def single_predict(image_path, device='cuda', seg_only=False, no_ellipse=False):
         wall_end = time.time()
         print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
         return {
-            'edge_img_uint8': edge_img,
-            'image_path': image_path
+            "edge_img_uint8": edge_img,
+            "image_path": image_path,
+            **_clinical_response_fields(),
         }
     
     # Ellipse fitting (same as ellip_fit.py)
@@ -192,13 +280,17 @@ def single_predict(image_path, device='cuda', seg_only=False, no_ellipse=False):
     wall_end = time.time()
     print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
     
-    # Return measurement data
+    # Return measurement data + shared clinical/dashboard keys
     return {
-        'hc_pixels': hc,
-        'center': (xc, yc),
-        'axes': (a, b),
-        'angle': theta,
-        'image_path': image_path
+        "hc_pixels": hc,
+        "center": (xc, yc),
+        "axes": (a, b),
+        "angle": theta,
+        "image_path": image_path,
+        **_clinical_response_fields(
+            hc_pixels=float(hc),
+            pixel_spacing_mm=pixel_spacing_mm,
+        ),
     }
 
 if __name__ == "__main__":
@@ -207,12 +299,19 @@ if __name__ == "__main__":
     parser.add_argument('image_path')
     parser.add_argument('--seg-only', action='store_true')
     parser.add_argument('--no-ellipse', action='store_true')
+    parser.add_argument("--pixel-spacing-mm", type=float, default=None,
+                        help="Pixel spacing in mm/pixel for hc_mm on full prediction path")
     args = parser.parse_args()
 
     image_path = args.image_path
-    
+
     # Run single prediction first
-    single_predict(image_path, seg_only=args.seg_only, no_ellipse=args.no_ellipse)
+    single_predict(
+        image_path,
+        seg_only=args.seg_only,
+        no_ellipse=args.no_ellipse,
+        pixel_spacing_mm=args.pixel_spacing_mm,
+    )
 
     if args.seg_only or args.no_ellipse:
         script_end = time.time()

@@ -3,19 +3,21 @@ Single image prediction for fetal head biometry.
 
 Prediction response contract (single source of truth for API / UI keys):
 
-    hc_pixels (float, optional)
-        Head circumference in upsampled pixel units when ellipse path runs.
+    hc_pixels (float | None)
+        Head circumference in upsampled pixel units when the ellipse + HC
+        path succeeds; ``None`` if geometry checks fail.
     hc_mm (float | None)
         HC in millimeters only when ``pixel_spacing_mm`` is supplied and valid;
         otherwise None.
     calibration (str)
         ``"none"`` — no mm conversion; ``"spacing"`` — ``hc_mm`` from spacing.
     confidence (float | None)
-        Mean sigmoid on foreground mask; filled in Step 2 (currently None).
+        Mean sigmoid activation on foreground (pixels with p > τ); ``None`` if
+        no foreground pixels.
     confidence_detail (dict)
-        mask_area_ratio, foreground_threshold, ellipse_valid — Step 2+.
+        mask_area_ratio, foreground_threshold, ellipse_valid (ellipse path only).
     quality_flag (str)
-        One of ``HIGH`` | ``MEDIUM`` | ``LOW`` (Step 5 will implement logic).
+        ``HIGH`` | ``MEDIUM`` | ``LOW`` from mask confidence and ellipse validity.
     quality_reasons (list[str])
         Machine-readable explanations for judges / support.
     ga_weeks_from_hc (float | None)
@@ -31,7 +33,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 import cv2
@@ -44,39 +46,112 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 from pixel_to_mm import convert_hc_to_mm, validate_pixel_spacing
 
+# Foreground mask for mean activation (sigmoid output is in [0, 1]).
+FOREGROUND_THRESHOLD = 0.5
+
+
+def compute_sigmoid_confidence_metrics(
+    prob: np.ndarray,
+    *,
+    tau: float = FOREGROUND_THRESHOLD,
+) -> Dict[str, Any]:
+    """
+    Derive confidence from the raw model probability map (before binarization).
+
+    Foreground is ``prob > tau``. ``confidence`` is the mean of ``prob`` over
+    those pixels. If there are no foreground pixels, ``confidence`` is None.
+    """
+    prob = np.asarray(prob, dtype=np.float64)
+    if prob.ndim != 2:
+        raise ValueError("prob must be a 2D HxW array")
+    prob = np.clip(prob, 0.0, 1.0)
+    fg = prob > tau
+    n_fg = int(fg.sum())
+    h, w = prob.shape
+    mask_area_ratio = n_fg / float(h * w)
+    if n_fg == 0:
+        return {
+            "confidence": None,
+            "mask_area_ratio": mask_area_ratio,
+            "foreground_threshold": tau,
+            "foreground_empty": True,
+        }
+    return {
+        "confidence": float(prob[fg].mean()),
+        "mask_area_ratio": mask_area_ratio,
+        "foreground_threshold": tau,
+        "foreground_empty": False,
+    }
+
+
+def _quality_flag_from_confidence(
+    confidence: Optional[float],
+    *,
+    ellipse_valid: Optional[bool],
+) -> str:
+    """Map confidence + ellipse validity to HIGH / MEDIUM / LOW."""
+    if ellipse_valid is False:
+        return "LOW"
+    if confidence is None:
+        return "LOW"
+    if confidence < 0.5:
+        return "LOW"
+    if confidence < 0.8:
+        return "MEDIUM"
+    return "HIGH"
+
 
 def _clinical_response_fields(
     *,
     hc_pixels: Optional[float] = None,
     pixel_spacing_mm: Optional[float] = None,
+    sigmoid_metrics: Optional[Dict[str, Any]] = None,
+    ellipse_valid: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Dashboard / API fields shared by all ``single_predict`` return variants.
 
-    Step 1: stable keys and null placeholders; later steps fill values.
+    ``sigmoid_metrics`` comes from :func:`compute_sigmoid_confidence_metrics``.
+    ``ellipse_valid`` is set only on the full ellipse + HC path; else ``None``.
     """
+    sm = sigmoid_metrics or {}
+    confidence: Optional[float] = sm.get("confidence")
+    mask_area_ratio: Optional[float] = sm.get("mask_area_ratio")
+    foreground_threshold: Optional[float] = sm.get("foreground_threshold")
+    foreground_empty: bool = bool(sm.get("foreground_empty"))
+    ran_sigmoid = bool(sm)
+
     calibration = "none"
     hc_mm: Optional[float] = None
-    quality_reasons = ["confidence_not_computed"]
+    reasons: List[str] = []
 
     if hc_pixels is not None and pixel_spacing_mm is not None:
         if validate_pixel_spacing(pixel_spacing_mm):
             hc_mm = float(convert_hc_to_mm(hc_pixels, pixel_spacing_mm))
             calibration = "spacing"
         else:
-            quality_reasons = quality_reasons + ["invalid_pixel_spacing"]
+            reasons.append("invalid_pixel_spacing")
+
+    if not ran_sigmoid:
+        reasons.append("confidence_not_computed")
+    elif foreground_empty:
+        reasons.append("empty_segmentation_foreground")
+    if ellipse_valid is False:
+        reasons.append("ellipse_geometry_invalid")
+
+    quality_flag = _quality_flag_from_confidence(confidence, ellipse_valid=ellipse_valid)
 
     return {
         "calibration": calibration,
         "hc_mm": hc_mm,
-        "confidence": None,
+        "confidence": confidence,
         "confidence_detail": {
-            "mask_area_ratio": None,
-            "foreground_threshold": None,
-            "ellipse_valid": None,
+            "mask_area_ratio": mask_area_ratio,
+            "foreground_threshold": foreground_threshold,
+            "ellipse_valid": ellipse_valid,
         },
-        "quality_flag": "LOW",
-        "quality_reasons": quality_reasons,
+        "quality_flag": quality_flag,
+        "quality_reasons": reasons,
         "ga_weeks_from_hc": None,
         "growth_code": "INSUFFICIENT_DATA",
         "gemma_verdict": None,
@@ -184,13 +259,12 @@ def single_predict(
         torch.cuda.synchronize()
     forward_end = time.time()
     
-    # GPU->CPU transfer and conversion
+    # GPU->CPU: keep raw sigmoid probabilities in [0, 1] for confidence; then
+    # binarize the same way as before (round -> *255 -> uint8) for mcc_edge.
     to_cpu_start = time.time()
-    predict = predict[0, 0, :, :]
-    predict = predict.cpu().detach().numpy()
-    predict = np.round(predict)
-    predict = predict * 255
-    predict = predict.astype('uint8')
+    prob_map = predict[0, 0].detach().float().cpu().numpy()
+    sigmoid_metrics = compute_sigmoid_confidence_metrics(prob_map)
+    predict_uint8 = (np.round(prob_map) * 255).astype(np.uint8)
     to_cpu_end = time.time()
 
     if seg_only:
@@ -207,14 +281,14 @@ def single_predict(
         wall_end = time.time()
         print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
         return {
-            "predict_mask_uint8": predict,
+            "predict_mask_uint8": predict_uint8,
             "image_path": image_path,
-            **_clinical_response_fields(),
+            **_clinical_response_fields(sigmoid_metrics=sigmoid_metrics),
         }
     
     # Postprocess - extract edge (same as postprocess.py)
     postprocess_start = time.time()
-    edge_img = mcc_edge(predict)
+    edge_img = mcc_edge(predict_uint8)
 
     if no_ellipse:
         postprocess_end = time.time()
@@ -233,27 +307,42 @@ def single_predict(
         return {
             "edge_img_uint8": edge_img,
             "image_path": image_path,
-            **_clinical_response_fields(),
+            **_clinical_response_fields(sigmoid_metrics=sigmoid_metrics),
         }
     
     # Ellipse fitting (same as ellip_fit.py)
     xc, yc, theta, a, b = ellip_fit(edge_img)
-    
+
     # Calculate head circumference (same as ellip_fit.py)
     u = 16  # upsample factor
-    
+
     # 1. Restore Center Coordinates
     xc = (xc + 0.5) * u - 0.5
     yc = (yc + 0.5) * u - 0.5
-    
+
     # 2. CALIBRATION: Subtract offset
     offset = 0.05
     a = (a - offset) * u
     b = (b - offset) * u
-    
+
     # 3. RAMANUJAN'S FORMULA for head circumference
-    h = ((a - b) ** 2) / ((a + b) ** 2)
-    hc = np.pi * (a + b) * (1 + (3 * h) / (10 + np.sqrt(4 - 3 * h)))
+    h = ((a - b) ** 2) / ((a + b) ** 2) if abs(a + b) > 1e-12 else np.nan
+    radicand = 4 - 3 * h
+    if not (np.isfinite(h) and np.isfinite(radicand) and radicand >= 0):
+        hc = float("nan")
+    else:
+        hc = np.pi * (a + b) * (1 + (3 * h) / (10 + np.sqrt(radicand)))
+
+    ellipse_valid = bool(
+        np.isfinite(hc)
+        and hc > 0
+        and np.isfinite(xc)
+        and np.isfinite(yc)
+        and np.isfinite(theta)
+        and np.isfinite(a)
+        and np.isfinite(b)
+        and min(abs(a), abs(b)) > 1e-3
+    )
     postprocess_end = time.time()
     
     # End total timer
@@ -272,25 +361,31 @@ def single_predict(
     # Display results
     print(f"\n=== Fetal Head Circumference Measurement ===")
     print(f"Image: {image_path}")
-    print(f"Head Circumference: {hc:.2f} pixels")
-    print(f"Center: ({xc:.2f}, {yc:.2f}) pixels")
-    print(f"Semi-axes: a={a:.2f}, b={b:.2f} pixels")
-    print(f"Angle: {theta:.4f} radians")
+    if ellipse_valid:
+        print(f"Head Circumference: {hc:.2f} pixels")
+        print(f"Center: ({xc:.2f}, {yc:.2f}) pixels")
+        print(f"Semi-axes: a={a:.2f}, b={b:.2f} pixels")
+        print(f"Angle: {theta:.4f} radians")
+    else:
+        print("Head Circumference: invalid (ellipse geometry check failed)")
 
     wall_end = time.time()
     print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
     
     # Return measurement data + shared clinical/dashboard keys
+    clinical = _clinical_response_fields(
+        hc_pixels=float(hc) if ellipse_valid else None,
+        pixel_spacing_mm=pixel_spacing_mm,
+        sigmoid_metrics=sigmoid_metrics,
+        ellipse_valid=ellipse_valid,
+    )
     return {
-        "hc_pixels": hc,
-        "center": (xc, yc),
-        "axes": (a, b),
-        "angle": theta,
+        "hc_pixels": hc if ellipse_valid else None,
+        "center": (xc, yc) if ellipse_valid else None,
+        "axes": (a, b) if ellipse_valid else None,
+        "angle": theta if ellipse_valid else None,
         "image_path": image_path,
-        **_clinical_response_fields(
-            hc_pixels=float(hc),
-            pixel_spacing_mm=pixel_spacing_mm,
-        ),
+        **clinical,
     }
 
 if __name__ == "__main__":

@@ -21,9 +21,14 @@ Prediction response contract (single source of truth for API / UI keys):
     quality_reasons (list[str])
         Machine-readable explanations for judges / support.
     ga_weeks_from_hc (float | None)
-        Hadlock GA from HC mm when available; Step 3 (currently None).
+        Hadlock gestational age (weeks) estimated from ``hc_mm`` when in range.
     growth_code (str)
         ``NORMAL`` | ``SMALL_FOR_GA`` | ``LARGE_FOR_GA`` | ``INSUFFICIENT_DATA``.
+        Requires ``hc_mm`` and ``clinical_ga_weeks`` for classification.
+    growth_detail (dict)
+        ``clinical_ga_weeks``, ``hc_ga_minus_clinical_weeks``, ``normal_band_weeks``.
+    growth_reasons (list[str])
+        Why growth is ``INSUFFICIENT_DATA`` when applicable.
     gemma_verdict (str | None)
         Short LLM copy; non-diagnostic — Step 4 (currently None).
 
@@ -45,6 +50,7 @@ from modules import CSM, mcc_edge, ellip_fit
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
 from pixel_to_mm import convert_hc_to_mm, validate_pixel_spacing
+from growth_assessment import assess_growth_from_hc
 
 # Foreground mask for mean activation (sigmoid output is in [0, 1]).
 FOREGROUND_THRESHOLD = 0.5
@@ -105,6 +111,8 @@ def _clinical_response_fields(
     *,
     hc_pixels: Optional[float] = None,
     pixel_spacing_mm: Optional[float] = None,
+    clinical_ga_weeks: Optional[float] = None,
+    hc_mm: Optional[float] = None,
     sigmoid_metrics: Optional[Dict[str, Any]] = None,
     ellipse_valid: Optional[bool] = None,
 ) -> Dict[str, Any]:
@@ -113,6 +121,7 @@ def _clinical_response_fields(
 
     ``sigmoid_metrics`` comes from :func:`compute_sigmoid_confidence_metrics``.
     ``ellipse_valid`` is set only on the full ellipse + HC path; else ``None``.
+    Pass ``clinical_ga_weeks`` from patient intake for Hadlock growth classification.
     """
     sm = sigmoid_metrics or {}
     confidence: Optional[float] = sm.get("confidence")
@@ -122,15 +131,16 @@ def _clinical_response_fields(
     ran_sigmoid = bool(sm)
 
     calibration = "none"
-    hc_mm: Optional[float] = None
     reasons: List[str] = []
 
-    if hc_pixels is not None and pixel_spacing_mm is not None:
+    if hc_mm is None and hc_pixels is not None and pixel_spacing_mm is not None:
         if validate_pixel_spacing(pixel_spacing_mm):
             hc_mm = float(convert_hc_to_mm(hc_pixels, pixel_spacing_mm))
             calibration = "spacing"
         else:
             reasons.append("invalid_pixel_spacing")
+    elif hc_mm is not None:
+        calibration = "spacing"
 
     if not ran_sigmoid:
         reasons.append("confidence_not_computed")
@@ -140,6 +150,9 @@ def _clinical_response_fields(
         reasons.append("ellipse_geometry_invalid")
 
     quality_flag = _quality_flag_from_confidence(confidence, ellipse_valid=ellipse_valid)
+
+    growth = assess_growth_from_hc(hc_mm, clinical_ga_weeks=clinical_ga_weeks)
+    reasons.extend(growth.get("growth_reasons") or [])
 
     return {
         "calibration": calibration,
@@ -152,8 +165,10 @@ def _clinical_response_fields(
         },
         "quality_flag": quality_flag,
         "quality_reasons": reasons,
-        "ga_weeks_from_hc": None,
-        "growth_code": "INSUFFICIENT_DATA",
+        "ga_weeks_from_hc": growth["ga_weeks_from_hc"],
+        "growth_code": growth["growth_code"],
+        "growth_detail": growth["growth_detail"],
+        "growth_reasons": growth.get("growth_reasons") or [],
         "gemma_verdict": None,
     }
 
@@ -164,6 +179,7 @@ def single_predict(
     seg_only=False,
     no_ellipse=False,
     pixel_spacing_mm: Optional[float] = None,
+    clinical_ga_weeks: Optional[float] = None,
 ):
     """
     Run HC segmentation and optional ellipse fit.
@@ -176,6 +192,8 @@ def single_predict(
         pixel_spacing_mm: When set and valid, ``hc_mm`` is filled on the full
             ellipse return path; otherwise ``hc_mm`` is null and
             ``calibration`` is ``none``.
+        clinical_ga_weeks: Documented gestational age from intake (weeks).
+            With ``hc_mm``, enables Hadlock ``growth_code`` classification.
     """
     wall_start = time.time()
     # CUDA sanity check
@@ -283,7 +301,10 @@ def single_predict(
         return {
             "predict_mask_uint8": predict_uint8,
             "image_path": image_path,
-            **_clinical_response_fields(sigmoid_metrics=sigmoid_metrics),
+            **_clinical_response_fields(
+                sigmoid_metrics=sigmoid_metrics,
+                clinical_ga_weeks=clinical_ga_weeks,
+            ),
         }
     
     # Postprocess - extract edge (same as postprocess.py)
@@ -307,7 +328,10 @@ def single_predict(
         return {
             "edge_img_uint8": edge_img,
             "image_path": image_path,
-            **_clinical_response_fields(sigmoid_metrics=sigmoid_metrics),
+            **_clinical_response_fields(
+                sigmoid_metrics=sigmoid_metrics,
+                clinical_ga_weeks=clinical_ga_weeks,
+            ),
         }
     
     # Ellipse fitting (same as ellip_fit.py)
@@ -376,6 +400,7 @@ def single_predict(
     clinical = _clinical_response_fields(
         hc_pixels=float(hc) if ellipse_valid else None,
         pixel_spacing_mm=pixel_spacing_mm,
+        clinical_ga_weeks=clinical_ga_weeks,
         sigmoid_metrics=sigmoid_metrics,
         ellipse_valid=ellipse_valid,
     )
@@ -396,6 +421,8 @@ if __name__ == "__main__":
     parser.add_argument('--no-ellipse', action='store_true')
     parser.add_argument("--pixel-spacing-mm", type=float, default=None,
                         help="Pixel spacing in mm/pixel for hc_mm on full prediction path")
+    parser.add_argument("--clinical-ga-weeks", type=float, default=None,
+                        help="Clinical gestational age in weeks (from intake) for growth_code")
     args = parser.parse_args()
 
     image_path = args.image_path
@@ -406,6 +433,7 @@ if __name__ == "__main__":
         seg_only=args.seg_only,
         no_ellipse=args.no_ellipse,
         pixel_spacing_mm=args.pixel_spacing_mm,
+        clinical_ga_weeks=args.clinical_ga_weeks,
     )
 
     if args.seg_only or args.no_ellipse:

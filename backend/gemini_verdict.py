@@ -1,10 +1,9 @@
 """
 Generate a short LLM-based explanation of fetal growth classification.
 
-Step 4: Gemini line — builds structured prompt with growth_code, deltas,
-and clinical/HC-implied GA; calls ChatGoogleGenerativeAI with guardrails
-to ensure the verdict matches the growth_code. Falls back to static templates
-on disagreement or API failure.
+Builds structured prompt with growth_code, deltas, and clinical/HC-implied GA;
+calls ChatGoogleGenerativeAI with guardrails to ensure the verdict matches the
+growth_code. Falls back to static templates on disagreement or API failure.
 """
 
 from __future__ import annotations

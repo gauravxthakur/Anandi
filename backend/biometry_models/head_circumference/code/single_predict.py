@@ -30,7 +30,7 @@ Prediction response contract (single source of truth for API / UI keys):
     growth_reasons (list[str])
         Why growth is ``INSUFFICIENT_DATA`` when applicable.
     gemma_verdict (str | None)
-        Short LLM copy; non-diagnostic — Step 4 (currently None).
+        Short LLM copy; non-diagnostic explanation of growth classification.
 
 """
 from __future__ import annotations
@@ -91,21 +91,103 @@ def compute_sigmoid_confidence_metrics(
     }
 
 
-def _quality_flag_from_confidence(
+def _compute_laplacian_variance(prob: np.ndarray) -> Optional[float]:
+    """
+    Compute Laplacian variance (image blur metric).
+    Higher variance = sharper image; lower variance = blurred image.
+    
+    Args:
+        prob: 2D probability map (HxW) in [0, 1].
+    
+    Returns:
+        Laplacian variance or None if image is too small.
+    """
+    prob_uint8 = (prob * 255).astype(np.uint8)
+    if prob_uint8.shape[0] < 3 or prob_uint8.shape[1] < 3:
+        return None
+    laplacian = cv2.Laplacian(prob_uint8, cv2.CV_64F)
+    variance = float(laplacian.var())
+    return variance
+
+
+def _compute_quality_flag_and_reasons(
     confidence: Optional[float],
     *,
-    ellipse_valid: Optional[bool],
-) -> str:
-    """Map confidence + ellipse validity to HIGH / MEDIUM / LOW."""
+    ellipse_valid: Optional[bool] = None,
+    mask_area_ratio: Optional[float] = None,
+    prob_map: Optional[np.ndarray] = None,
+    confidence_low_cutoff: float = 0.5,
+    confidence_high_cutoff: float = 0.8,
+    mask_area_min: float = 0.05,
+    mask_area_max: float = 0.40,
+    blur_variance_cutoff: float = 50.0,
+) -> tuple[str, List[str]]:
+    """
+    Compute quality_flag and quality_reasons based on multiple criteria.
+    
+    Criteria:
+    - Ellipse validity: invalid → LOW
+    - Confidence: < low_cutoff → LOW; < high_cutoff → MEDIUM; >= high_cutoff → HIGH
+    - Mask area: ratio outside [min, max] range → downgrade to MEDIUM/LOW
+    - Blur: Laplacian variance < blur_cutoff → downgrade to MEDIUM
+    
+    Args:
+        confidence: Mean sigmoid on foreground [0, 1] or None.
+        ellipse_valid: Whether ellipse fit succeeded.
+        mask_area_ratio: Foreground pixels / total pixels [0, 1].
+        prob_map: Raw probability map for blur detection (optional).
+        confidence_low_cutoff: Confidence threshold for LOW (default 0.5).
+        confidence_high_cutoff: Confidence threshold for MEDIUM→HIGH (default 0.8).
+        mask_area_min: Min plausible mask area ratio (default 0.05).
+        mask_area_max: Max plausible mask area ratio (default 0.40).
+        blur_variance_cutoff: Laplacian variance threshold for blur (default 50.0).
+    
+    Returns:
+        (quality_flag, quality_reasons): e.g., ("HIGH", ["confidence_high", ...])
+    """
+    reasons: List[str] = []
+    base_flag = "HIGH"
+    
+    # Check 1: Ellipse validity is critical
     if ellipse_valid is False:
-        return "LOW"
+        base_flag = "LOW"
+        reasons.append("ellipse_geometry_invalid")
+    
+    # Check 2: Confidence thresholds
     if confidence is None:
-        return "LOW"
-    if confidence < 0.5:
-        return "LOW"
-    if confidence < 0.8:
-        return "MEDIUM"
-    return "HIGH"
+        base_flag = min(base_flag, "LOW", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+        reasons.append("confidence_unavailable")
+    elif confidence < confidence_low_cutoff:
+        base_flag = min(base_flag, "LOW", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+        reasons.append(f"confidence_low_{confidence:.2f}")
+    elif confidence < confidence_high_cutoff:
+        base_flag = min(base_flag, "MEDIUM", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+        reasons.append(f"confidence_medium_{confidence:.2f}")
+    else:
+        reasons.append(f"confidence_high_{confidence:.2f}")
+    
+    # Check 3: Mask area plausibility
+    if mask_area_ratio is not None:
+        if mask_area_ratio < mask_area_min:
+            base_flag = min(base_flag, "MEDIUM", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+            reasons.append(f"mask_area_too_small_{mask_area_ratio:.4f}")
+        elif mask_area_ratio > mask_area_max:
+            base_flag = min(base_flag, "MEDIUM", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+            reasons.append(f"mask_area_too_large_{mask_area_ratio:.4f}")
+        else:
+            reasons.append(f"mask_area_valid_{mask_area_ratio:.4f}")
+    
+    # Check 4: Blur detection (optional second pass)
+    if prob_map is not None:
+        blur_var = _compute_laplacian_variance(prob_map)
+        if blur_var is not None:
+            if blur_var < blur_variance_cutoff:
+                base_flag = min(base_flag, "MEDIUM", key=lambda x: {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[x])
+                reasons.append(f"possible_blur_{blur_var:.1f}")
+            else:
+                reasons.append(f"sharpness_ok_{blur_var:.1f}")
+    
+    return base_flag, reasons
 
 
 def _clinical_response_fields(
@@ -116,6 +198,7 @@ def _clinical_response_fields(
     hc_mm: Optional[float] = None,
     sigmoid_metrics: Optional[Dict[str, Any]] = None,
     ellipse_valid: Optional[bool] = None,
+    prob_map: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Dashboard / API fields shared by all ``single_predict`` return variants.
@@ -123,6 +206,7 @@ def _clinical_response_fields(
     ``sigmoid_metrics`` comes from :func:`compute_sigmoid_confidence_metrics``.
     ``ellipse_valid`` is set only on the full ellipse + HC path; else ``None``.
     Pass ``clinical_ga_weeks`` from patient intake for Hadlock growth classification.
+    ``prob_map`` is the raw [0,1] probability map used for blur detection.
     """
     sm = sigmoid_metrics or {}
     confidence: Optional[float] = sm.get("confidence")
@@ -147,15 +231,20 @@ def _clinical_response_fields(
         reasons.append("confidence_not_computed")
     elif foreground_empty:
         reasons.append("empty_segmentation_foreground")
-    if ellipse_valid is False:
-        reasons.append("ellipse_geometry_invalid")
 
-    quality_flag = _quality_flag_from_confidence(confidence, ellipse_valid=ellipse_valid)
+    # Compute quality_flag with comprehensive criteria
+    quality_flag, quality_detail_reasons = _compute_quality_flag_and_reasons(
+        confidence,
+        ellipse_valid=ellipse_valid,
+        mask_area_ratio=mask_area_ratio,
+        prob_map=prob_map,
+    )
+    reasons.extend(quality_detail_reasons)
 
     growth = assess_growth_from_hc(hc_mm, clinical_ga_weeks=clinical_ga_weeks)
     reasons.extend(growth.get("growth_reasons") or [])
 
-    # Step 4: Generate Gemini verdict using growth_code and numeric context
+    # Generate LLM verdict using growth_code and numeric context
     growth_code = growth.get("growth_code")
     growth_detail = growth.get("growth_detail") or {}
     gemma_verdict = generate_gemini_verdict(
@@ -316,6 +405,7 @@ def single_predict(
             **_clinical_response_fields(
                 sigmoid_metrics=sigmoid_metrics,
                 clinical_ga_weeks=clinical_ga_weeks,
+                prob_map=prob_map,
             ),
         }
     
@@ -343,6 +433,7 @@ def single_predict(
             **_clinical_response_fields(
                 sigmoid_metrics=sigmoid_metrics,
                 clinical_ga_weeks=clinical_ga_weeks,
+                prob_map=prob_map,
             ),
         }
     
@@ -415,6 +506,7 @@ def single_predict(
         clinical_ga_weeks=clinical_ga_weeks,
         sigmoid_metrics=sigmoid_metrics,
         ellipse_valid=ellipse_valid,
+        prob_map=prob_map,
     )
     return {
         "hc_pixels": hc if ellipse_valid else None,

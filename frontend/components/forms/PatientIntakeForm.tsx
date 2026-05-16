@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { FieldRow } from "@/components/forms/FieldRow";
 import { GaCautionTrigger } from "@/components/forms/GaCautionTrigger";
+import { ReportPreviewModal } from "@/components/forms/ReportPreviewModal";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormSectionCard } from "@/components/form-section-card";
@@ -38,6 +39,7 @@ import {
   type PatientIntakeFormValues,
   type PatientIntakeParsedValues,
 } from "@/lib/patient-intake-schema";
+import type { BiometryPrediction } from "@/lib/biometry-types";
 
 function getTodayIsoDate() {
   const d = new Date();
@@ -87,6 +89,11 @@ export function PatientIntakeForm() {
     useState<Record<FormFTrackedKey, TrackedFieldState>>(INITIAL_TRACKED_FIELDS);
   const [gaCitation, setGaCitation] = useState<string | null>(null);
   const [extractionLoaded, setExtractionLoaded] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportData, setReportData] = useState<{
+    patient: PatientIntakeParsedValues;
+    biometry?: BiometryPrediction | null;
+  } | null>(null);
 
   const referralSource = form.watch("referralSource");
   const selectedIndications = form.watch("indicationForUltrasound");
@@ -235,13 +242,22 @@ export function PatientIntakeForm() {
       resultOfProcedure: tracked.resultOfProcedure.value,
     };
     const parsed: PatientIntakeParsedValues = patientIntakeSchema.parse(merged);
-    console.log("PatientIntake:", parsed, { formFTracked: tracked });
-    toast.success("Form saved");
+    
+    // Get biometry data from session bridge if available
+    const biometry = readPredictionForForm();
+    
+    // Set report data and open modal
+    setReportData({
+      patient: parsed,
+      biometry: biometry as BiometryPrediction | null | undefined,
+    });
+    setReportModalOpen(true);
   };
 
   return (
-    <div className="flex flex-1 justify-center bg-muted/30 px-4 py-10">
-      <div className="w-full max-w-4xl">
+    <>
+      <div className="flex flex-1 justify-center bg-muted/30 px-4 py-10">
+        <div className="w-full max-w-4xl">
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -633,5 +649,13 @@ export function PatientIntakeForm() {
         </form>
       </div>
     </div>
+
+    <ReportPreviewModal
+      open={reportModalOpen}
+      onOpenChange={setReportModalOpen}
+      patient={reportData?.patient ?? null}
+      biometry={reportData?.biometry}
+    />
+    </>
   );
 }

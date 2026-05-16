@@ -1,8 +1,9 @@
 """
-HTTP API for fetal head circumference inference (Strike A).
+HTTP API for fetal head circumference inference (Strike A) + optional Form F extract hook.
 
-Run from repo root:
-  uvicorn backend.api.main:app --reload --host 0.0.0.0 --port 8000
+Run from repo root (Windows-friendly):
+
+  py -m uvicorn backend.api.main:app --reload --host 0.0.0.0 --port 8000
 """
 from __future__ import annotations
 
@@ -93,3 +94,14 @@ async def predict_hc(
         raise HTTPException(status_code=422, detail="Could not read or process image.")
 
     return _json_safe(result)
+
+
+@app.post("/extract/form-f")
+async def extract_form_f() -> dict[str, Any]:
+    """
+    Placeholder for OCR / intake extraction (Strike B).
+
+    Returns empty ``fields`` so the frontend fills values from the scan session bridge;
+    populate ``fields`` / ``citation`` here when a real extraction pipeline exists.
+    """
+    return {"fields": {}, "citation": None}

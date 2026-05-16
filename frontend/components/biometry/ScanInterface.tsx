@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RotateCcw, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +24,7 @@ import {
   mapBackendEllipseToImage,
   overlaySlice,
 } from "@/lib/overlay-geometry";
+import { persistPredictionForForm } from "@/lib/biometry-session";
 type AnalyzeStatus = "idle" | "loading" | "success" | "error";
 
 export function ScanInterface() {
@@ -88,13 +90,30 @@ export function ScanInterface() {
         if (!imageSize) {
           throw new Error("Wait for the image preview to load, then analyze again.");
         }
-        setOverlay(buildDemoOverlay(imageSize.width, imageSize.height));
+        const demoOverlay = buildDemoOverlay(
+          imageSize.width,
+          imageSize.height,
+        );
+        setOverlay(demoOverlay);
+        persistPredictionForForm({
+          hc_mm: null,
+          ga_weeks_from_hc: 28.4,
+          growth_verdict:
+            "Demo overlay — correlate HC-derived GA with clinical dating before reporting.",
+          hc_pixels: demoOverlay.hc_pixels,
+        });
         toast.message("Demo overlay", {
           description:
             "Set NEXT_PUBLIC_BIOMETRY_API_URL and start the Python API for live inference.",
         });
       } else {
         const prediction = await predictHeadCircumference(file);
+        persistPredictionForForm({
+          hc_mm: prediction.hc_mm ?? null,
+          ga_weeks_from_hc: prediction.ga_weeks_from_hc ?? null,
+          growth_verdict: prediction.growth_verdict ?? null,
+          hc_pixels: prediction.hc_pixels ?? null,
+        });
         setOverlay(overlaySlice(prediction));
         if (!hasOverlayGeometry(overlaySlice(prediction))) {
           toast.warning("Analysis finished", {
@@ -131,12 +150,22 @@ export function ScanInterface() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-8">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Ultrasound scan</h1>
-        <p className="text-muted-foreground text-sm">
-          Upload a fetal head frame — the model outlines the skull and reports HC in
-          pixels.
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Ultrasound scan</h1>
+          <p className="text-muted-foreground text-sm">
+            Upload a fetal head frame — the model outlines the skull and reports HC in
+            pixels.
+          </p>
+        </div>
+        <nav className="shrink-0 text-sm font-medium">
+          <Link
+            href="/patient-intake"
+            className="text-emerald-700 underline-offset-4 hover:underline dark:text-emerald-400"
+          >
+            Form F intake
+          </Link>
+        </nav>
       </header>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
@@ -238,7 +267,7 @@ export function ScanInterface() {
         <p className="text-muted-foreground text-xs">
           Demo mode: no API URL configured. Start{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-            uvicorn backend.api.main:app --port 8000
+            py -m uvicorn backend.api.main:app --port 8000
           </code>{" "}
           and set{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-[11px]">

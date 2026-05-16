@@ -1,9 +1,14 @@
 "use client";
 
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
+import { FieldRow } from "@/components/forms/FieldRow";
+import { GaCautionTrigger } from "@/components/forms/GaCautionTrigger";
+import { ReportPreviewModal } from "@/components/forms/ReportPreviewModal";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormSectionCard } from "@/components/form-section-card";
@@ -20,11 +25,21 @@ import {
 } from "@/components/ui/toggle-group";
 import { Textarea } from "@/components/ui/textarea";
 
+import { fetchFormExtraction } from "@/lib/api/form-extraction";
+import { readPredictionForForm } from "@/lib/biometry-session";
+import { parseClinicalGaWeeks, parseWeeksFloat } from "@/lib/clinical-ga";
+import {
+  INITIAL_TRACKED_FIELDS,
+  allTrackedApproved,
+  type FormFTrackedKey,
+  type TrackedFieldState,
+} from "@/lib/form-f-workflow";
 import {
   patientIntakeSchema,
   type PatientIntakeFormValues,
   type PatientIntakeParsedValues,
 } from "@/lib/patient-intake-schema";
+import type { BiometryPrediction } from "@/lib/biometry-types";
 
 function getTodayIsoDate() {
   const d = new Date();
@@ -70,27 +85,197 @@ export function PatientIntakeForm() {
     mode: "onBlur",
   });
 
+  const [tracked, setTracked] =
+    useState<Record<FormFTrackedKey, TrackedFieldState>>(INITIAL_TRACKED_FIELDS);
+  const [gaCitation, setGaCitation] = useState<string | null>(null);
+  const [extractionLoaded, setExtractionLoaded] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportData, setReportData] = useState<{
+    patient: PatientIntakeParsedValues;
+    biometry?: BiometryPrediction | null;
+  } | null>(null);
+
   const referralSource = form.watch("referralSource");
   const selectedIndications = form.watch("indicationForUltrasound");
+  const lmpOrWeeks = form.watch("lmpOrWeeks");
+  const dateOfProcedure = form.watch("dateOfProcedure");
+
+  const setField = (
+    key: FormFTrackedKey,
+    patch: Partial<TrackedFieldState>,
+  ) => {
+    setTracked((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], ...patch },
+    }));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateFromBackend() {
+      const snapshot = readPredictionForForm();
+      const extraction = await fetchFormExtraction();
+
+      if (cancelled) return;
+
+      const lmp = form.getValues("lmpOrWeeks");
+      const dop = form.getValues("dateOfProcedure");
+      const parsedGa = parseClinicalGaWeeks(lmp, dop);
+
+      const gaAi =
+        extraction?.fields?.gestationalAgeWeeks?.aiSuggestion ??
+        (snapshot?.ga_weeks_from_hc != null
+          ? String(Math.round(snapshot.ga_weeks_from_hc * 10) / 10)
+          : "");
+
+      const gaVal =
+        extraction?.fields?.gestationalAgeWeeks?.value ??
+        (parsedGa != null ? String(parsedGa) : "");
+
+      let hcAi = extraction?.fields?.headCircumferenceMm?.aiSuggestion ?? "";
+      let hcVal = extraction?.fields?.headCircumferenceMm?.value ?? "";
+
+      if (!hcAi && snapshot?.hc_mm != null) {
+        hcAi = String(Math.round(snapshot.hc_mm * 10) / 10);
+        hcVal = hcVal || hcAi;
+      } else if (!hcAi && snapshot?.hc_pixels != null) {
+        hcAi = `${Math.round(snapshot.hc_pixels)} px (add pixel spacing on API for mm)`;
+        hcVal = hcVal || hcAi;
+      }
+
+      const growthText = snapshot?.growth_verdict?.trim() ?? "";
+      const existingNarrative = form.getValues("resultOfProcedure")?.trim() ?? "";
+
+      const resAi =
+        extraction?.fields?.resultOfProcedure?.aiSuggestion ?? growthText;
+      const resVal =
+        extraction?.fields?.resultOfProcedure?.value ||
+        existingNarrative ||
+        growthText;
+
+      const cite =
+        extraction?.citation?.trim() ||
+        (growthText.length > 0 ? growthText : null);
+      setGaCitation(cite);
+
+      setTracked({
+        gestationalAgeWeeks: {
+          aiSuggestion: gaAi,
+          value: gaVal,
+          approved: false,
+        },
+        headCircumferenceMm: {
+          aiSuggestion: hcAi,
+          value: hcVal || hcAi,
+          approved: false,
+        },
+        resultOfProcedure: {
+          aiSuggestion: resAi,
+          value: resVal,
+          approved: false,
+        },
+      });
+
+      if (resVal) {
+        form.setValue("resultOfProcedure", resVal, {
+          shouldDirty: false,
+          shouldValidate: false,
+        });
+      }
+
+      setExtractionLoaded(true);
+    }
+
+    void hydrateFromBackend();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time hydrate; form defaults are stable
+  }, []);
+
+  useEffect(() => {
+    const parsed = parseClinicalGaWeeks(lmpOrWeeks, dateOfProcedure);
+    if (parsed == null) return;
+    setTracked((prev) => {
+      if (prev.gestationalAgeWeeks.approved) return prev;
+      return {
+        ...prev,
+        gestationalAgeWeeks: {
+          ...prev.gestationalAgeWeeks,
+          value: String(parsed),
+        },
+      };
+    });
+  }, [lmpOrWeeks, dateOfProcedure]);
+
+  const gaCautionActive = useMemo(() => {
+    const clinical = parseWeeksFloat(tracked.gestationalAgeWeeks.value);
+    const aiRaw = tracked.gestationalAgeWeeks.aiSuggestion;
+    if (/px/i.test(aiRaw)) return false;
+    const ai = parseWeeksFloat(aiRaw);
+    if (clinical == null || ai == null) return false;
+    return Math.abs(clinical - ai) > 1;
+  }, [
+    tracked.gestationalAgeWeeks.value,
+    tracked.gestationalAgeWeeks.aiSuggestion,
+  ]);
+
+  const gaCautionReasoning = useMemo(() => {
+    const clinical = parseWeeksFloat(tracked.gestationalAgeWeeks.value);
+    const aiRaw = tracked.gestationalAgeWeeks.aiSuggestion;
+    if (/px/i.test(aiRaw)) return "";
+    const ai = parseWeeksFloat(aiRaw);
+    if (clinical == null || ai == null) return "";
+    return `Clinical GA is ${clinical} wk vs HC-derived ${ai} wk (difference > 1 week). Reconcile ultrasound biometry with dating before sign-off.`;
+  }, [
+    tracked.gestationalAgeWeeks.value,
+    tracked.gestationalAgeWeeks.aiSuggestion,
+  ]);
+
+  const readyToSubmit = extractionLoaded && allTrackedApproved(tracked);
 
   const onSubmit = (values: PatientIntakeFormValues) => {
-    const parsed: PatientIntakeParsedValues = patientIntakeSchema.parse(values);
-    // For now: just log + toast. You can later POST this to your API.
-    console.log("PatientIntake:", parsed);
-    toast.success("Form saved");
+    const merged: PatientIntakeFormValues = {
+      ...values,
+      resultOfProcedure: tracked.resultOfProcedure.value,
+    };
+    const parsed: PatientIntakeParsedValues = patientIntakeSchema.parse(merged);
+    
+    // Get biometry data from session bridge if available
+    const biometry = readPredictionForForm();
+    
+    // Set report data and open modal
+    setReportData({
+      patient: parsed,
+      biometry: biometry as BiometryPrediction | null | undefined,
+    });
+    setReportModalOpen(true);
   };
 
   return (
-    <div className="flex flex-1 justify-center bg-muted/30 px-4 py-10">
-      <div className="w-full max-w-4xl">
-        <div className="mb-8 space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Patient Intake
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Fill patient identity, obstetric history, referral details, AI insights,
-            and declarations.
-          </p>
+    <>
+      <div className="flex flex-1 justify-center bg-muted/30 px-4 py-10">
+        <div className="w-full max-w-4xl">
+        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Patient Intake
+            </h1>
+            <p className="text-muted-foreground text-sm">
+              Fill patient identity, obstetric history, referral details, AI insights,
+              and declarations. Scan results preload measurements when available.
+            </p>
+          </div>
+          <nav className="flex gap-3 text-sm font-medium">
+            <Link
+              href="/scan"
+              className="text-emerald-700 underline-offset-4 hover:underline dark:text-emerald-400"
+            >
+              Open scan
+            </Link>
+          </nav>
         </div>
 
         <form
@@ -170,6 +355,34 @@ export function PatientIntakeForm() {
                 <Label htmlFor="lmpOrWeeks">LMP or Current Weeks of Pregnancy</Label>
                 <Input id="lmpOrWeeks" {...form.register("lmpOrWeeks")} />
                 <FieldError message={form.formState.errors.lmpOrWeeks?.message} />
+              </div>
+
+              <div className="space-y-2 sm:col-span-2">
+                <FieldRow
+                  id="gestationalAgeWeeks"
+                  label="Gestational age (weeks) — clinical"
+                  labelAccessory={
+                    <GaCautionTrigger
+                      active={gaCautionActive}
+                      reasoning={gaCautionReasoning}
+                      citation={gaCitation}
+                    />
+                  }
+                  value={tracked.gestationalAgeWeeks.value}
+                  onChange={(next) =>
+                    setField("gestationalAgeWeeks", { value: next, approved: false })
+                  }
+                  aiSuggestion={tracked.gestationalAgeWeeks.aiSuggestion}
+                  approved={tracked.gestationalAgeWeeks.approved}
+                  onApprovedChange={(approved) =>
+                    setField("gestationalAgeWeeks", { approved })
+                  }
+                  placeholder="e.g. 28 or 28.3"
+                />
+                <p className="text-muted-foreground text-xs">
+                  Compared to HC-derived GA from the latest scan when both values parse as
+                  weeks. Approve after reconciling with chart dating.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -269,9 +482,24 @@ export function PatientIntakeForm() {
 
           <FormSectionCard
             title='Card 4: The "Anandi" AI Insights (Diagnostic Info)'
-            description="Ultrasound indications, procedure narrative (may be AI-assisted later), and MTP indication."
+            description="Measured HC from inference, indications, AI-assisted narrative — verify each row before submission."
           >
             <div className="space-y-4">
+              <FieldRow
+                id="headCircumferenceMm"
+                label="Head circumference (HC)"
+                value={tracked.headCircumferenceMm.value}
+                onChange={(next) =>
+                  setField("headCircumferenceMm", { value: next, approved: false })
+                }
+                aiSuggestion={tracked.headCircumferenceMm.aiSuggestion}
+                approved={tracked.headCircumferenceMm.approved}
+                onApprovedChange={(approved) =>
+                  setField("headCircumferenceMm", { approved })
+                }
+                placeholder="mm from calibrated inference, or px note"
+              />
+
               <div className="space-y-2">
                 <Label>Indication for Ultrasound</Label>
                 <ToggleGroup
@@ -300,23 +528,30 @@ export function PatientIntakeForm() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="resultOfProcedure">Result of Procedure</Label>
-                <Textarea
-                  id="resultOfProcedure"
-                  rows={4}
-                  placeholder="(Auto-filled by AI later)"
-                  {...form.register("resultOfProcedure")}
-                />
-                <FieldError
-                  message={form.formState.errors.resultOfProcedure?.message}
-                />
-              </div>
+              <FieldRow
+                id="resultOfProcedureTracked"
+                label="Result of procedure"
+                multiline
+                value={tracked.resultOfProcedure.value}
+                onChange={(next) => {
+                  setField("resultOfProcedure", { value: next, approved: false });
+                  form.setValue("resultOfProcedure", next, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                }}
+                aiSuggestion={tracked.resultOfProcedure.aiSuggestion}
+                approved={tracked.resultOfProcedure.approved}
+                onApprovedChange={(approved) =>
+                  setField("resultOfProcedure", { approved })
+                }
+                placeholder="Summary narrative — populated from inference when available"
+              />
 
               <div className="flex items-center justify-between gap-4 rounded-md border p-3">
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Indication for MTP</p>
-                  <p className="text-xs text-muted-foreground">Yes / No</p>
+                  <p className="text-muted-foreground text-xs">Yes / No</p>
                 </div>
                 <Switch
                   checked={form.watch("indicationForMtp")}
@@ -397,13 +632,30 @@ export function PatientIntakeForm() {
                 </div>
               </div>
 
+              {!allTrackedApproved(tracked) ? (
+                <p className="text-muted-foreground text-sm">
+                  Approve every verified measurement above (clinical GA, HC, procedure
+                  narrative) to enable Save.
+                </p>
+              ) : null}
+
               <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:justify-end">
-                <Button type="submit">Save</Button>
+                <Button type="submit" disabled={!readyToSubmit}>
+                  Save
+                </Button>
               </div>
             </div>
           </FormSectionCard>
         </form>
       </div>
     </div>
+
+    <ReportPreviewModal
+      open={reportModalOpen}
+      onOpenChange={setReportModalOpen}
+      patient={reportData?.patient ?? null}
+      biometry={reportData?.biometry}
+    />
+    </>
   );
 }

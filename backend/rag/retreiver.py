@@ -124,8 +124,31 @@ class Retriever:
         return [result.get("chunk_id", "") for result in results]
 
 
-# Global instance for easy access
-retriever = Retriever()
+# Global instance for easy access (lazy initialization)
+retriever = None
+
+
+def _get_retriever() -> Retriever:
+    """Lazy initialize retriever, handle missing table gracefully."""
+    global retriever
+    if retriever is None:
+        try:
+            retriever = Retriever()
+        except Exception as e:
+            # If table doesn't exist, return a dummy retriever
+            print(f"Warning: Could not initialize RAG retriever: {e}")
+            print("Returning empty search results as fallback.")
+            class DummyRetriever:
+                def search(self, *args, **kwargs):
+                    return []
+                def search_legal(self, *args, **kwargs):
+                    return []
+                def search_guidelines(self, *args, **kwargs):
+                    return []
+                def search_research(self, *args, **kwargs):
+                    return []
+            retriever = DummyRetriever()
+    return retriever
 
 
 # Convenience functions
@@ -135,19 +158,23 @@ def search(query: str,
           limit: int = 5,
           threshold: float = 0.5) -> List[SearchResult]:
     """Convenience function for semantic search with filtering."""
-    return retriever.search(query, source_type, document_name, limit, threshold)
+    ret = _get_retriever()
+    return ret.search(query, source_type, document_name, limit, threshold)
 
 
 def search_legal(query: str, limit: int = 5, threshold: float = 0.5) -> List[SearchResult]:
     """Convenience function for legal document search."""
-    return retriever.search(query, source_type="legal", limit=limit, threshold=threshold)
+    ret = _get_retriever()
+    return ret.search(query, source_type="legal", limit=limit, threshold=threshold)
 
 
 def search_guidelines(query: str, limit: int = 5, threshold: float = 0.5) -> List[SearchResult]:
     """Convenience function for guideline search."""
-    return retriever.search(query, source_type="guideline", limit=limit, threshold=threshold)
+    ret = _get_retriever()
+    return ret.search(query, source_type="guideline", limit=limit, threshold=threshold)
 
 
 def search_research(query: str, limit: int = 5, threshold: float = 0.5) -> List[SearchResult]:
     """Convenience function for research document search."""
-    return retriever.search(query, source_type="research", limit=limit, threshold=threshold)
+    ret = _get_retriever()
+    return ret.search(query, source_type="research", limit=limit, threshold=threshold)

@@ -116,3 +116,10 @@ temp/
 *.njsproj
 *.sln
 *.sw?
+
+
+# Ignore all generated session data and PDFs
+backend/sessions/*
+
+# Do not ignore the tracking file inside sessions, keeping the folder structure alive
+!backend/sessions/.gitkeep

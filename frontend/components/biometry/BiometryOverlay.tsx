@@ -24,6 +24,12 @@ const QUALITY_STYLES: Record<
   },
 };
 
+const DEFAULT_QUALITY_STYLE = {
+  label: "Quality unavailable",
+  stroke: "rgb(148, 163, 184)",
+  dash: undefined,
+};
+
 export type BiometryOverlayProps = {
   width: number;
   height: number;
@@ -39,7 +45,7 @@ export function BiometryOverlay({
   overlay,
   className,
 }: BiometryOverlayProps) {
-  const quality = QUALITY_STYLES[overlay.quality_flag];
+  const quality = QUALITY_STYLES[overlay.quality_flag] ?? DEFAULT_QUALITY_STYLE;
   const showEllipse = ellipse != null;
 
   return (
@@ -108,7 +114,7 @@ export function OverlayHud({
   overlay: BiometryOverlayResult;
   className?: string;
 }) {
-  const quality = QUALITY_STYLES[overlay.quality_flag];
+  const quality = QUALITY_STYLES[overlay.quality_flag] ?? DEFAULT_QUALITY_STYLE;
   const confidencePct =
     overlay.confidence != null ? Math.round(overlay.confidence * 100) : null;
   const showWarning =

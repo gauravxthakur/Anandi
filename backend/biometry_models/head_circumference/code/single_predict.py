@@ -52,7 +52,7 @@ from modules import CSM, mcc_edge, ellip_fit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from project_paths import Paths
-from pixel_to_mm import convert_hc_to_mm, validate_pixel_spacing
+from pixel_to_mm import convert_hc_to_mm, get_default_pixel_spacing, validate_pixel_spacing
 from growth_assessment import assess_growth_from_hc
 from gemini_verdict import generate_growth_verdict
 
@@ -278,12 +278,18 @@ def _clinical_response_fields(
     calibration = "none"
     reasons: List[str] = []
 
-    if hc_mm is None and hc_pixels is not None and pixel_spacing_mm is not None:
-        if validate_pixel_spacing(pixel_spacing_mm):
-            hc_mm = float(convert_hc_to_mm(hc_pixels, pixel_spacing_mm))
-            calibration = "spacing"
+    if hc_mm is None and hc_pixels is not None:
+        if pixel_spacing_mm is not None:
+            if validate_pixel_spacing(pixel_spacing_mm):
+                hc_mm = float(convert_hc_to_mm(hc_pixels, pixel_spacing_mm))
+                calibration = "spacing"
+            else:
+                reasons.append("invalid_pixel_spacing")
         else:
-            reasons.append("invalid_pixel_spacing")
+            default_spacing = get_default_pixel_spacing()
+            hc_mm = float(convert_hc_to_mm(hc_pixels, default_spacing))
+            calibration = "assumed_spacing"
+            reasons.append("default_pixel_spacing_assumed")
     elif hc_mm is not None:
         calibration = "spacing"
 

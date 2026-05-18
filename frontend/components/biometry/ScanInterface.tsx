@@ -61,10 +61,14 @@ export function ScanInterface() {
     setErrorMessage(null);
   }, []);
 
-  const handleSubmitClinicalGa = () => {
+  const handleSubmitClinicalGa = async () => {
     if (clinicalGaWeeks == null) {
       toast.error("Enter clinical GA before submitting.");
       return;
+    }
+
+    if (file && status !== "loading") {
+      await runAnalysis();
     }
 
     const snapshot = readPredictionForForm();

@@ -3,15 +3,16 @@
 export const BIOMETRY_FORM_BRIDGE_KEY = "biometry:formBridge:v1";
 
 export type FormBridgePrediction = {
-  hc_mm: number | null;
-  ga_weeks_from_hc: number | null;
-  growth_verdict: string | null;
-  hc_pixels: number | null;
+  hc_mm?: number | null;
+  ga_weeks_from_hc?: number | null;
+  growth_verdict?: string | null;
+  hc_pixels?: number | null;
+  clinical_ga_weeks?: number | null;
   capturedAt: string;
 };
 
 export function persistPredictionForForm(
-  data: Omit<FormBridgePrediction, "capturedAt">,
+  data: Partial<Omit<FormBridgePrediction, "capturedAt">>,
 ): void {
   if (typeof window === "undefined") return;
   const payload: FormBridgePrediction = {

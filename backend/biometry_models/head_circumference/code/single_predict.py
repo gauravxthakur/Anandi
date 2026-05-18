@@ -516,6 +516,8 @@ def single_predict(
         and np.isfinite(b)
         and min(abs(a), abs(b)) > 1e-3
     )
+
+    fallback_used = False
     postprocess_end = time.time()
     
     # End total timer
@@ -546,16 +548,18 @@ def single_predict(
     print(f"Wall time (single_predict, incl prints): {(wall_end - wall_start)*1000:.2f} ms")
     
     # Return measurement data + shared clinical/dashboard keys
+    hc_pixels_value = float(hc) if np.isfinite(hc) and hc > 0 else None
     clinical = _clinical_response_fields(
-        hc_pixels=float(hc) if ellipse_valid else None,
+        hc_pixels=hc_pixels_value,
         pixel_spacing_mm=pixel_spacing_mm,
         clinical_ga_weeks=clinical_ga_weeks,
         sigmoid_metrics=sigmoid_metrics,
         ellipse_valid=ellipse_valid,
         prob_map=prob_map,
     )
+
     return {
-        "hc_pixels": hc if ellipse_valid else None,
+        "hc_pixels": hc_pixels_value,
         "center": (xc, yc) if ellipse_valid else None,
         "axes": (a, b) if ellipse_valid else None,
         "angle": theta if ellipse_valid else None,

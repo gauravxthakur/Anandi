@@ -18,7 +18,8 @@ export class BiometryApiError extends Error {
 
 export async function predictHeadCircumference(
   file: File,
-  options?: { pixelSpacingMm?: number; clinicalGaWeeks?: number },
+  clinicalGaWeeks?: number | null,
+  options?: { pixelSpacingMm?: number },
 ): Promise<BiometryPrediction> {
   if (!isBiometryApiConfigured()) {
     throw new BiometryApiError(
@@ -34,8 +35,8 @@ export async function predictHeadCircumference(
   if (options?.pixelSpacingMm != null) {
     params.set("pixel_spacing_mm", String(options.pixelSpacingMm));
   }
-  if (options?.clinicalGaWeeks != null) {
-    params.set("clinical_ga_weeks", String(options.clinicalGaWeeks));
+  if (clinicalGaWeeks != null) {
+    params.set("clinical_ga_weeks", String(clinicalGaWeeks));
   }
 
   const qs = params.toString();
@@ -56,3 +57,4 @@ export async function predictHeadCircumference(
 
   return (await response.json()) as BiometryPrediction;
 }
+

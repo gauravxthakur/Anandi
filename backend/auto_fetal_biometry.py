@@ -229,6 +229,7 @@ async def build_orchestrator():
                 "growth_code": raw.get("growth_code") if isinstance(raw, dict) else None,
                 "ga_weeks_from_hc": raw.get("ga_weeks_from_hc"),
                 "patient_intake": patient,
+                "clinical_ga_weeks": patient.get("clinical_ga_weeks"), # Add clinical GA
             }
             # guard for non-dicts
             state["extracted_form"] = extracted
@@ -396,7 +397,7 @@ async def extract_form_f():
 async def predict_hc_endpoint(
     file: UploadFile = File(...),
     pixel_spacing_mm: Optional[float] = None,
-    clinical_ga_weeks: Optional[float] = None,
+    clinical_ga_weeks: Optional[float] = None, # Accept clinical_ga_weeks
 ):
     if not file:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -416,7 +417,7 @@ async def predict_hc_endpoint(
     if pixel_spacing_mm is not None:
         patient_data["pixel_spacing_mm"] = pixel_spacing_mm
     if clinical_ga_weeks is not None:
-        patient_data["clinical_ga_weeks"] = clinical_ga_weeks
+        patient_data["clinical_ga_weeks"] = clinical_ga_weeks # Pass clinical GA
 
     return await process_endpoint(
         ProcessRequest(

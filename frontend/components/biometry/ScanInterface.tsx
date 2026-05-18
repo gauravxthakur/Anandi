@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RotateCcw, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +25,7 @@ import {
   mapBackendEllipseToImage,
   overlaySlice,
 } from "@/lib/overlay-geometry";
-import { persistPredictionForForm } from "@/lib/biometry-session";
+import { persistPredictionForForm, readPredictionForForm } from "@/lib/biometry-session";
 type AnalyzeStatus = "idle" | "loading" | "success" | "error";
 
 export function ScanInterface() {
@@ -40,6 +41,8 @@ export function ScanInterface() {
   const [overlay, setOverlay] = useState<BiometryOverlayResult | null>(null);
   const [status, setStatus] = useState<AnalyzeStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [clinicalGaWeeks, setClinicalGaWeeks] = useState<number | null>(null);
+  const router = useRouter();
 
   const revokePreview = useCallback(() => {
     if (previewUrlRef.current) {
@@ -57,6 +60,24 @@ export function ScanInterface() {
     setStatus("idle");
     setErrorMessage(null);
   }, []);
+
+  const handleSubmitClinicalGa = () => {
+    if (clinicalGaWeeks == null) {
+      toast.error("Enter clinical GA before submitting.");
+      return;
+    }
+
+    const snapshot = readPredictionForForm();
+    persistPredictionForForm({
+      hc_mm: snapshot?.hc_mm ?? null,
+      ga_weeks_from_hc: snapshot?.ga_weeks_from_hc ?? null,
+      growth_verdict: snapshot?.growth_verdict ?? null,
+      hc_pixels: snapshot?.hc_pixels ?? null,
+      clinical_ga_weeks: clinicalGaWeeks,
+    });
+
+    router.push("/patient-intake");
+  };
 
   const handleFileChange = (next: File | null) => {
     revokePreview();
@@ -107,12 +128,13 @@ export function ScanInterface() {
             "Set NEXT_PUBLIC_BIOMETRY_API_URL and start the Python API for live inference.",
         });
       } else {
-        const prediction = await predictHeadCircumference(file);
+        const prediction = await predictHeadCircumference(file, clinicalGaWeeks);
         persistPredictionForForm({
           hc_mm: prediction.hc_mm ?? null,
           ga_weeks_from_hc: prediction.ga_weeks_from_hc ?? null,
           growth_verdict: prediction.growth_verdict ?? null,
           hc_pixels: prediction.hc_pixels ?? null,
+          clinical_ga_weeks: clinicalGaWeeks ?? null,
         });
         setOverlay(overlaySlice(prediction));
         if (!hasOverlayGeometry(overlaySlice(prediction))) {
@@ -135,7 +157,7 @@ export function ScanInterface() {
       setStatus("error");
       toast.error("Could not analyze image", { description: message });
     }
-  }, [file, imageSize]);
+  }, [file, imageSize, clinicalGaWeeks]);
 
   useEffect(() => {
     if (!file || !previewUrl || status !== "idle" || overlay) return;
@@ -180,6 +202,27 @@ export function ScanInterface() {
             onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
           />
         </div>
+        <div className="flex flex-1 flex-col gap-2">
+          <Label htmlFor="clinical-ga-weeks">Clinical Gestational Age (Weeks)</Label>
+          <Input
+            id="clinical-ga-weeks"
+            type="number"
+            placeholder="e.g., 28.5"
+            value={clinicalGaWeeks ?? ""}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              setClinicalGaWeeks(isNaN(val) ? null : val);
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={clinicalGaWeeks == null}
+            onClick={handleSubmitClinicalGa}
+          >
+            Submit GA
+          </Button>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -194,7 +237,7 @@ export function ScanInterface() {
             ) : (
               <>
                 <Upload className="size-4" />
-                Analyze
+                Re-analyze
               </>
             )}
           </Button>
@@ -208,9 +251,9 @@ export function ScanInterface() {
               <RotateCcw className="size-4" />
               Retry
             </Button>
-          ) : null}
-        </div>
+        ) : null}
       </div>
+    </div>
 
       <div className="relative overflow-hidden rounded-xl border bg-zinc-950 shadow-lg ring-1 ring-emerald-500/20">
         {!previewUrl ? (
@@ -279,3 +322,4 @@ export function ScanInterface() {
     </div>
   );
 }
+

@@ -129,8 +129,14 @@ export function PatientIntakeForm() {
           ? String(Math.round(snapshot.ga_weeks_from_hc * 10) / 10)
           : "");
 
+      const scanClinicalGa =
+        snapshot?.clinical_ga_weeks != null
+          ? String(snapshot.clinical_ga_weeks)
+          : null;
+
       const gaVal =
         extraction?.fields?.gestationalAgeWeeks?.value ??
+        scanClinicalGa ??
         (parsedGa != null ? String(parsedGa) : "");
 
       let hcAi = extraction?.fields?.headCircumferenceMm?.aiSuggestion ?? "";

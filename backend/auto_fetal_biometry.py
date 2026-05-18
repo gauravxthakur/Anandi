@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 from dotenv import load_dotenv
 import json
@@ -23,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import uuid4
 import importlib.util
+import tempfile
 from pathlib import Path
 import time
 
@@ -229,6 +231,7 @@ async def build_orchestrator():
                 "growth_code": raw.get("growth_code") if isinstance(raw, dict) else None,
                 "ga_weeks_from_hc": raw.get("ga_weeks_from_hc"),
                 "patient_intake": patient,
+                "clinical_ga_weeks": patient.get("clinical_ga_weeks"), # Add clinical GA
             }
             # guard for non-dicts
             state["extracted_form"] = extracted
@@ -386,6 +389,75 @@ async def process_endpoint(req: ProcessRequest):
     return _format_biometry_response(result)
 
 
+class ReportGenerateRequest(BaseModel):
+    patient: dict[str, Any]
+    biometry: Optional[dict[str, Any]] = None
+
+
+@app.post("/report/generate")
+async def report_generate_endpoint(request: ReportGenerateRequest) -> dict[str, Any]:
+    try:
+        from reports.doc_report import generate_report
+
+        patient = request.patient
+        biometry = request.biometry
+
+        image_name = ""
+        head_circumference = ""
+        center = ""
+        semi_axes = ""
+        angle = ""
+
+        if biometry:
+            if biometry.get("hc_mm"):
+                head_circumference = f"{float(biometry['hc_mm']):.1f} mm"
+            elif biometry.get("hc_pixels"):
+                head_circumference = f"{int(biometry['hc_pixels'])} px"
+
+        tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp_pdf.close()
+
+        try:
+            generate_report(
+                full_name=patient.get("fullName", ""),
+                age=str(patient.get("age", "")),
+                husband_father_name=patient.get("husbandOrFatherName", ""),
+                contact_number=patient.get("contactNumber", ""),
+                postal_address=patient.get("postalAddress", ""),
+                total_living_children=str(patient.get("livingChildrenTotal", "")),
+                living_sons=str(patient.get("livingSonsCount", "")),
+                living_daughters=str(patient.get("livingDaughtersCount", "")),
+                lmp_or_weeks=patient.get("lmpOrWeeks", ""),
+                referral_source=patient.get("referralSource", ""),
+                referring_doctor=patient.get("referringDoctorNameAddress", ""),
+                image_name=image_name,
+                head_circumference=head_circumference,
+                center=center,
+                semi_axes=semi_axes,
+                angle=angle,
+                indication_ultrasound=", ".join(patient.get("indicationForUltrasound", [])) if patient.get("indicationForUltrasound") else "",
+                result_procedure=patient.get("resultOfProcedure", ""),
+                indication_mtp="Yes" if patient.get("indicationForMtp") else "No",
+                date_procedure=patient.get("dateOfProcedure", ""),
+                patient_consent=patient.get("patientConsentNoSexDisclosure", False),
+                doctor_confirmation=patient.get("doctorConfirmationNoSexDisclosure", False),
+                output_filename=tmp_pdf.name,
+            )
+
+            with open(tmp_pdf.name, "rb") as f:
+                pdf_data = f.read()
+
+            encoded = base64.b64encode(pdf_data).decode("utf-8")
+            return {"pdf_base64": encoded}
+        finally:
+            try:
+                Path(tmp_pdf.name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/extract/form-f")
 async def extract_form_f():
     # Legacy route for optional form extraction. If no OCR is configured, return an empty payload.
@@ -396,7 +468,7 @@ async def extract_form_f():
 async def predict_hc_endpoint(
     file: UploadFile = File(...),
     pixel_spacing_mm: Optional[float] = None,
-    clinical_ga_weeks: Optional[float] = None,
+    clinical_ga_weeks: Optional[float] = None, # Accept clinical_ga_weeks
 ):
     if not file:
         raise HTTPException(status_code=400, detail="No file uploaded")
@@ -416,7 +488,7 @@ async def predict_hc_endpoint(
     if pixel_spacing_mm is not None:
         patient_data["pixel_spacing_mm"] = pixel_spacing_mm
     if clinical_ga_weeks is not None:
-        patient_data["clinical_ga_weeks"] = clinical_ga_weeks
+        patient_data["clinical_ga_weeks"] = clinical_ga_weeks # Pass clinical GA
 
     return await process_endpoint(
         ProcessRequest(

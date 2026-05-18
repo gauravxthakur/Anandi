@@ -32,7 +32,18 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className={`${inter.className} min-h-full flex flex-col`}>
-        {children}
+        <header className="w-full border-b border-border/50 bg-background/80 backdrop-blur-sm">
+          <div className="mx-4 flex h-12 items-center sm:mx-6">
+            <img
+              src="/anandi_logo.png"
+              alt="Anandi Logo"
+              className="h-6 w-auto object-contain"
+            />
+          </div>
+        </header>
+        <main className="flex-1">
+          {children}
+        </main>
         <Toaster />
       </body>
     </html>

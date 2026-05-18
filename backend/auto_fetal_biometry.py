@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 from dotenv import load_dotenv
 import json
@@ -23,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import uuid4
 import importlib.util
+import tempfile
 from pathlib import Path
 import time
 
@@ -385,6 +387,75 @@ async def process_endpoint(req: ProcessRequest):
 
     result = await ORCHESTRATOR_APP.ainvoke(state)
     return _format_biometry_response(result)
+
+
+class ReportGenerateRequest(BaseModel):
+    patient: dict[str, Any]
+    biometry: Optional[dict[str, Any]] = None
+
+
+@app.post("/report/generate")
+async def report_generate_endpoint(request: ReportGenerateRequest) -> dict[str, Any]:
+    try:
+        from reports.doc_report import generate_report
+
+        patient = request.patient
+        biometry = request.biometry
+
+        image_name = ""
+        head_circumference = ""
+        center = ""
+        semi_axes = ""
+        angle = ""
+
+        if biometry:
+            if biometry.get("hc_mm"):
+                head_circumference = f"{float(biometry['hc_mm']):.1f} mm"
+            elif biometry.get("hc_pixels"):
+                head_circumference = f"{int(biometry['hc_pixels'])} px"
+
+        tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp_pdf.close()
+
+        try:
+            generate_report(
+                full_name=patient.get("fullName", ""),
+                age=str(patient.get("age", "")),
+                husband_father_name=patient.get("husbandOrFatherName", ""),
+                contact_number=patient.get("contactNumber", ""),
+                postal_address=patient.get("postalAddress", ""),
+                total_living_children=str(patient.get("livingChildrenTotal", "")),
+                living_sons=str(patient.get("livingSonsCount", "")),
+                living_daughters=str(patient.get("livingDaughtersCount", "")),
+                lmp_or_weeks=patient.get("lmpOrWeeks", ""),
+                referral_source=patient.get("referralSource", ""),
+                referring_doctor=patient.get("referringDoctorNameAddress", ""),
+                image_name=image_name,
+                head_circumference=head_circumference,
+                center=center,
+                semi_axes=semi_axes,
+                angle=angle,
+                indication_ultrasound=", ".join(patient.get("indicationForUltrasound", [])) if patient.get("indicationForUltrasound") else "",
+                result_procedure=patient.get("resultOfProcedure", ""),
+                indication_mtp="Yes" if patient.get("indicationForMtp") else "No",
+                date_procedure=patient.get("dateOfProcedure", ""),
+                patient_consent=patient.get("patientConsentNoSexDisclosure", False),
+                doctor_confirmation=patient.get("doctorConfirmationNoSexDisclosure", False),
+                output_filename=tmp_pdf.name,
+            )
+
+            with open(tmp_pdf.name, "rb") as f:
+                pdf_data = f.read()
+
+            encoded = base64.b64encode(pdf_data).decode("utf-8")
+            return {"pdf_base64": encoded}
+        finally:
+            try:
+                Path(tmp_pdf.name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/extract/form-f")

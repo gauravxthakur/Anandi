@@ -6,7 +6,6 @@ __pycache__/
 
 data/
 biometry_models/data/
-rag/data/
 results/
 sessions/
 

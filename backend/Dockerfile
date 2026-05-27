@@ -8,9 +8,13 @@ RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://dow
 
 COPY . .
 
-EXPOSE 7860
+RUN useradd -m -u 1000 user
 
-RUN useradd -m -u 1000 app
-USER app
+RUN chown -R user:user /app
 
-CMD ["uvicorn", "auto_fetal_biometry:app", "--host", "0.0.0.0", "--port", "7860"]
+USER user
+
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
+
+CMD ["python", "-m", "uvicorn", "auto_fetal_biometry:app", "--host", "0.0.0.0", "--port", "7860"]

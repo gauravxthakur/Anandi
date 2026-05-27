@@ -1,0 +1,66 @@
+{
+  "reference": "Hadlock et al., 1984",
+  "unit": "mm",
+  "data": [
+    {
+      "gestational_age_weeks": 14,
+      "bpd_mean": 28,
+      "hc_mean": 92,
+      "ac_mean": 80,
+      "fl_mean": 15
+    },
+    {
+      "gestational_age_weeks": 16,
+      "bpd_mean": 35,
+      "hc_mean": 125,
+      "ac_mean": 105,
+      "fl_mean": 21
+    },
+    {
+      "gestational_age_weeks": 20,
+      "bpd_mean": 47,
+      "hc_mean": 178,
+      "ac_mean": 152,
+      "fl_mean": 33
+    },
+    {
+      "gestational_age_weeks": 24,
+      "bpd_mean": 59,
+      "hc_mean": 226,
+      "ac_mean": 197,
+      "fl_mean": 44
+    },
+    {
+      "gestational_age_weeks": 28,
+      "bpd_mean": 71,
+      "hc_mean": 268,
+      "ac_mean": 240,
+      "fl_mean": 54
+    },
+    {
+      "gestational_age_weeks": 32,
+      "bpd_mean": 81,
+      "hc_mean": 302,
+      "ac_mean": 282,
+      "fl_mean": 63
+    },
+    {
+      "gestational_age_weeks": 36,
+      "bpd_mean": 89,
+      "hc_mean": 328,
+      "ac_mean": 322,
+      "fl_mean": 70
+    },
+    {
+      "gestational_age_weeks": 40,
+      "bpd_mean": 95,
+      "hc_mean": 348,
+      "ac_mean": 360,
+      "fl_mean": 76
+    }
+  ],
+  "formulas": {
+    "efw_hadlock1": "Log10(BW) = 1.304 + 0.05281(AC) + 0.1938(FL) - 0.004(AC * FL)",
+    "efw_hadlock2": "Log10(BW) = 1.335 - 0.0034(AC * FL) + 0.0316(BPD) + 0.0457(AC) + 0.1623(FL)"
+  }
+}

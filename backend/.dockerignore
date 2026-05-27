@@ -1,0 +1,15 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+
+data/
+biometry_models/data/
+rag/data/
+results/
+sessions/
+
+*.pdf
+*.png
+*.log
